@@ -17,8 +17,8 @@
 window.MOTOHUB_CONFIG = {
 
   // ── Required: paste your Supabase values here ──────────────
-  SUPABASE_URL: "PASTE_YOUR_SUPABASE_PROJECT_URL_HERE",
-  SUPABASE_ANON_KEY: "PASTE_YOUR_SUPABASE_ANON_KEY_HERE",
+  SUPABASE_URL: "https://supabase.com/dashboard/project/eapfopkcdgeakpdpdzny",
+  SUPABASE_ANON_KEY: "eapfopkcdgeakpdpdzny",
 
   // ── Optional: map provider ──────────────────────────────────
   // Default (leaflet) requires no key and works immediately.
