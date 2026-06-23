@@ -17,8 +17,8 @@
 window.MOTOHUB_CONFIG = {
 
   // ── Required: paste your Supabase values here ──────────────
-  SUPABASE_URL: "https://eapfopkcdgeakpdpdzny.supabase.co/auth/v1/signup",
-  SUPABASE_ANON_KEY: "eapfopkcdgeakpdpdzny",
+  SUPABASE_URL: "https://eapfopkcdgeakpdpdzny.supabase.co",
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVhcGZvcGtjZGdlYWtwZHBkem55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNzg3OTAsImV4cCI6MjA5Nzc1NDc5MH0.rDFeXQXqkSU_eBvvZEq8zRIJNnDZ-uZxYFrlhDHbvBA",
 
   // ── Optional: map provider ──────────────────────────────────
   // Default (leaflet) requires no key and works immediately.
