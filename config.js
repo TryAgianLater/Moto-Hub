@@ -17,7 +17,7 @@
 window.MOTOHUB_CONFIG = {
 
   // ── Required: paste your Supabase values here ──────────────
-  SUPABASE_URL: "https://supabase.com/dashboard/project/eapfopkcdgeakpdpdzny",
+  SUPABASE_URL: "https://eapfopkcdgeakpdpdzny.supabase.co/auth/v1/signup",
   SUPABASE_ANON_KEY: "eapfopkcdgeakpdpdzny",
 
   // ── Optional: map provider ──────────────────────────────────
