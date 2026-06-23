@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MotoHub Admin</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+</head>
+<body>
+
+<!-- ═══ NAV ═══ -->
+<nav id="nav">
+  <div class="nav-logo" onclick="location.reload()">
+    <div class="nav-logo-mark">M</div>
+    <div class="nav-logo-text">MOTOHUB <span style="color:var(--text-3);font-size:14px;letter-spacing:0.08em">ADMIN</span></div>
+  </div>
+  <div class="nav-right" id="nav-right" style="margin-left:auto">
+    <a href="index.html" class="btn btn-sm btn-ghost">← Back to Site</a>
+  </div>
+</nav>
+
+<div id="app"></div>
+<div id="toast-container"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+
+<script>
+/* ============================================================
+   MOTOHUB ADMIN PANEL
+   Real auth-gated admin dashboard backed by Supabase.
+   Only profiles with is_admin = true (set manually once via
+   SQL — see README.md) can access anything past the login screen.
+   ============================================================ */
+const { Auth, TrailsAPI, TrailRequestsAPI, LapTimesAPI, BikesAPI,
+        RidersAPI, StatsAPI, Utils, Toast, MotoMap, SUPABASE_READY, renderSetupGateIfNeeded, CFG, sb } = window.MotoHub;
+
+const app = document.getElementById('app');
+let adminProfile = null;
+let reviewMap = null;
+
+function loadingHTML() {
+  return `<div class="page flex-center" style="justify-content:center"><div class="spinner"></div></div>`;
+}
+
+// ── BOOT: check auth + admin role ──────────────────────────────────────
+(async function boot() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+
+  const profile = await Auth.getCurrentProfile();
+  if (!profile) { renderLoginScreen(); return; }
+  if (!profile.is_admin) { renderAccessDenied(profile); return; }
+  adminProfile = profile;
+  renderAdminShell();
+})();
+
+// ── LOGIN SCREEN ─────────────────────────────────────────────────────────
+function renderLoginScreen() {
+  app.innerHTML = `
+  <div class="page auth-page">
+    <div class="auth-box">
+      <div class="auth-box-header">
+        <div class="auth-box-title">ADMIN LOGIN</div>
+        <div class="auth-box-sub">Sign in with your MotoHub admin account</div>
+      </div>
+      <div class="auth-box-body">
+        <div class="auth-error" id="auth-error"></div>
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="login-email" placeholder="admin@example.com"></div>
+        <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="login-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doAdminLogin()"></div>
+        <button class="btn btn-primary btn-full" onclick="doAdminLogin()" id="login-btn">Log In</button>
+      </div>
+      <div class="auth-box-footer">
+        Not an admin? <a href="index.html" style="color:var(--orange)">Return to the main site</a>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function doAdminLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('auth-error');
+  errEl.classList.remove('show');
+  if (!email || !password) { errEl.textContent = 'Enter both email and password.'; errEl.classList.add('show'); return; }
+  const btn = document.getElementById('login-btn'); btn.disabled = true; btn.textContent = 'Logging in…';
+  const { error } = await Auth.login(email, password);
+  btn.disabled = false; btn.textContent = 'Log In';
+  if (error) { errEl.textContent = error; errEl.classList.add('show'); return; }
+  const profile = await Auth.getCurrentProfile(true);
+  if (!profile) { errEl.textContent = 'Could not load profile.'; errEl.classList.add('show'); return; }
+  if (!profile.is_admin) { renderAccessDenied(profile); return; }
+  adminProfile = profile;
+  Toast.success('Welcome, admin.');
+  renderAdminShell();
+}
+
+// ── ACCESS DENIED ─────────────────────────────────────────────────────────
+function renderAccessDenied(profile) {
+  app.innerHTML = `
+  <div class="page flex-center" style="justify-content:center;flex-direction:column;gap:16px;text-align:center;padding:40px">
+    <div style="font-size:48px">🔒</div>
+    <div class="t-display" style="font-size:36px;color:var(--white)">ACCESS DENIED</div>
+    <p style="color:var(--text-3);max-width:420px">Signed in as <strong style="color:var(--text-1)">${Utils.escapeHtml(profile.display_name)}</strong>, but this account doesn't have admin access.</p>
+    <div class="card p-20" style="max-width:480px;text-align:left;margin-top:8px">
+      <div class="t-label mb-8">To grant admin access</div>
+      <p style="font-size:12px;color:var(--text-2);line-height:1.8">Run this once in your Supabase SQL Editor, replacing the email:</p>
+      <pre style="background:var(--surface-3);padding:12px;border-radius:var(--radius-sm);font-size:11px;color:var(--orange);overflow-x:auto;margin-top:8px">update public.profiles set is_admin = true
+where id = (select id from auth.users where email = '${Utils.escapeHtml(profile.email||'you@example.com')}');</pre>
+    </div>
+    <div class="flex gap-12 mt-16">
+      <button class="btn btn-outline" onclick="MotoHub.Auth.logout().then(()=>location.reload())">Log Out</button>
+      <a href="index.html" class="btn btn-primary">Back to Site</a>
+    </div>
+  </div>`;
+}
+
+// ── ADMIN SHELL ───────────────────────────────────────────────────────────
+function renderAdminShell() {
+  document.getElementById('nav-right').innerHTML = `
+    <span style="font-size:12px;color:var(--text-2);margin-right:8px">${Utils.escapeHtml(adminProfile.display_name)}</span>
+    <button class="btn btn-sm btn-ghost" onclick="MotoHub.Auth.logout().then(()=>location.reload())">Log Out</button>
+    <a href="index.html" class="btn btn-sm btn-ghost">← Back to Site</a>`;
+
+  app.innerHTML = `
+  <div class="admin-layout">
+    <div class="admin-sidebar-nav">
+      <div class="admin-nav-section">
+        <div class="admin-nav-label">Overview</div>
+        <button class="admin-nav-item active" data-sec="overview" onclick="switchSection('overview')"><span>📊</span> Overview</button>
+      </div>
+      <div class="admin-nav-section">
+        <div class="admin-nav-label">Moderation Queue</div>
+        <button class="admin-nav-item" data-sec="trail-requests" onclick="switchSection('trail-requests')"><span>🗺</span> Trail Requests</button>
+        <button class="admin-nav-item" data-sec="lap-times" onclick="switchSection('lap-times')"><span>🏁</span> Lap Times</button>
+        <button class="admin-nav-item" data-sec="reviews" onclick="switchSection('reviews')"><span>⭐</span> Reviews</button>
+      </div>
+      <div class="admin-nav-section">
+        <div class="admin-nav-label">Manage</div>
+        <button class="admin-nav-item" data-sec="trails" onclick="switchSection('trails')"><span>📍</span> Trails</button>
+        <button class="admin-nav-item" data-sec="riders" onclick="switchSection('riders')"><span>👥</span> Riders</button>
+      </div>
+      <div class="admin-nav-section" style="border-bottom:none">
+        <div class="admin-nav-label">System</div>
+        <button class="admin-nav-item" data-sec="connections" onclick="switchSection('connections')"><span>🔌</span> Connections</button>
+      </div>
+    </div>
+    <div class="admin-content" id="admin-section-content">${loadingHTML()}</div>
+  </div>`;
+
+  renderSection('overview');
+}
+
+function switchSection(sec) {
+  document.querySelectorAll('.admin-nav-item').forEach(b => b.classList.toggle('active', b.dataset.sec === sec));
+  renderSection(sec);
+}
+
+async function renderSection(sec) {
+  const el = document.getElementById('admin-section-content');
+  el.innerHTML = loadingHTML();
+  if (sec === 'overview') return renderOverview(el);
+  if (sec === 'trail-requests') return renderTrailRequests(el);
+  if (sec === 'lap-times') return renderLapTimes(el);
+  if (sec === 'reviews') return renderReviewsModeration(el);
+  if (sec === 'trails') return renderTrailsManage(el);
+  if (sec === 'riders') return renderRidersManage(el);
+  if (sec === 'connections') return renderConnections(el);
+}
+
+// ── OVERVIEW ──────────────────────────────────────────────────────────────
+async function renderOverview(el) {
+  const [stats, pendingRequests, pendingLaps] = await Promise.all([
+    StatsAPI.getPlatformStats(),
+    sb.from('trail_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    sb.from('lap_times').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+  ]);
+
+  el.innerHTML = `
+  <div class="admin-page-title">OVERVIEW</div>
+  <div class="admin-page-sub">Platform health at a glance.</div>
+  <div class="admin-kpi-grid">
+    <div class="admin-kpi"><div class="admin-kpi-val">${stats.trails}</div><div class="admin-kpi-label">Live Trails</div></div>
+    <div class="admin-kpi"><div class="admin-kpi-val">${stats.riders}</div><div class="admin-kpi-label">Registered Riders</div></div>
+    <div class="admin-kpi"><div class="admin-kpi-val">${stats.laps}</div><div class="admin-kpi-label">Approved Laps</div></div>
+    <div class="admin-kpi"><div class="admin-kpi-val">${stats.bikes}</div><div class="admin-kpi-label">Bikes Registered</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card p-24" style="cursor:pointer" onclick="switchSection('trail-requests')">
+      <div class="flex-between mb-12">
+        <div class="t-label">Pending Trail Requests</div>
+        ${pendingRequests.count > 0 ? `<span class="badge badge-pending">${pendingRequests.count} new</span>` : ''}
+      </div>
+      <div class="t-display" style="font-size:48px;color:var(--white)">${pendingRequests.count || 0}</div>
+      <div style="font-size:12px;color:var(--text-3);margin-top:4px">Awaiting review →</div>
+    </div>
+    <div class="card p-24" style="cursor:pointer" onclick="switchSection('lap-times')">
+      <div class="flex-between mb-12">
+        <div class="t-label">Pending Lap Times</div>
+        ${pendingLaps.count > 0 ? `<span class="badge badge-pending">${pendingLaps.count} new</span>` : ''}
+      </div>
+      <div class="t-display" style="font-size:48px;color:var(--white)">${pendingLaps.count || 0}</div>
+      <div style="font-size:12px;color:var(--text-3);margin-top:4px">Awaiting review →</div>
+    </div>
+  </div>
+
+  ${(!pendingRequests.count && !pendingLaps.count) ? `
+  <div class="card p-32 mt-24 text-center">
+    <div style="font-size:32px;margin-bottom:8px">✅</div>
+    <div class="t-display" style="font-size:24px;color:var(--white)">QUEUE IS CLEAR</div>
+    <div style="font-size:13px;color:var(--text-3);margin-top:6px">Nothing waiting on review right now.</div>
+  </div>` : ''}`;
+}
+
+// ── TRAIL REQUESTS ────────────────────────────────────────────────────────
+async function renderTrailRequests(el) {
+  const requests = await TrailRequestsAPI.getAll();
+  const pending = requests.filter(r => r.status === 'pending' || r.status === 'under_review');
+  const resolved = requests.filter(r => r.status === 'approved' || r.status === 'rejected' || r.status === 'needs_info');
+
+  el.innerHTML = `
+  <div class="admin-page-title">TRAIL REQUESTS</div>
+  <div class="admin-page-sub">Community-submitted trails awaiting your review.</div>
+
+  <div class="t-label mb-16">Pending (${pending.length})</div>
+  <div id="pending-requests-list">
+    ${pending.length ? pending.map(r => trailRequestRowHTML(r)).join('') : `<div class="card p-32 text-center" style="color:var(--text-3);font-size:13px">No pending requests.</div>`}
+  </div>
+
+  ${resolved.length ? `
+  <div class="t-label mb-16 mt-32">Resolved (${resolved.length})</div>
+  <div class="card">
+    <table class="admin-table">
+      <thead><tr><th>Trail</th><th>Submitted By</th><th>Status</th><th>Date</th></tr></thead>
+      <tbody>
+        ${resolved.map(r => `
+        <tr>
+          <td>${Utils.escapeHtml(r.trail_name)}</td>
+          <td>${Utils.escapeHtml(r.submitter?.display_name||'Unknown')}</td>
+          <td><span class="badge badge-${r.status}">${r.status.replace('_',' ')}</span></td>
+          <td style="color:var(--text-3)">${Utils.formatDate(r.created_at)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>` : ''}
+
+  <div class="modal-overlay hidden" id="request-detail-modal">
+    <div class="modal modal-xl">
+      <div class="modal-header"><div><div class="modal-title" id="rd-title">TRAIL REQUEST</div><div class="modal-subtitle" id="rd-sub"></div></div><button class="modal-close" onclick="document.getElementById('request-detail-modal').classList.add('hidden')">✕</button></div>
+      <div class="modal-body">
+        <div class="grid-2 mb-16" id="rd-meta"></div>
+        <div id="rd-desc" style="font-size:13px;color:var(--text-2);line-height:1.7"></div>
+        <div style="height:280px;border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border);margin-top:16px"><div id="rd-map" style="width:100%;height:100%"></div></div>
+        <div id="rd-photos" class="flex gap-8 mt-12" style="flex-wrap:wrap"></div>
+        <div class="form-group mt-16"><label class="form-label">Admin Notes</label><textarea class="form-textarea" id="rd-notes" placeholder="Reason for approval/rejection, feedback for the submitter…"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="rd-reject-btn">Reject</button>
+        <button class="btn btn-outline" id="rd-needsinfo-btn">Request More Info</button>
+        <button class="btn btn-primary" id="rd-approve-btn">Approve & Publish Trail</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function trailRequestRowHTML(r) {
+  return `
+  <div class="card p-20 mb-12">
+    <div class="flex-between">
+      <div>
+        <div class="t-display" style="font-size:22px;color:var(--white)">${Utils.escapeHtml(r.trail_name)}</div>
+        <div style="font-size:12px;color:var(--text-3);margin-top:2px">📍 ${Utils.escapeHtml(r.location_name||'')} · ${r.distance_miles||0} mi · ${Utils.escapeHtml(r.terrain_type||'')} · ${r.suggested_difficulty}</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px">Submitted by <strong style="color:var(--text-2)">${Utils.escapeHtml(r.submitter?.display_name||'Unknown')}</strong> · ${Utils.timeAgo(r.created_at)}</div>
+      </div>
+      <span class="badge badge-${r.status}">${r.status.replace('_',' ')}</span>
+    </div>
+    <button class="btn btn-sm btn-outline mt-12" onclick='openRequestDetail(${JSON.stringify(r).replace(/'/g, "&#39;")})'>Review Submission →</button>
+  </div>`;
+}
+
+function openRequestDetail(r) {
+  document.getElementById('request-detail-modal').classList.remove('hidden');
+  document.getElementById('rd-title').textContent = r.trail_name.toUpperCase();
+  document.getElementById('rd-sub').textContent = `Submitted by ${r.submitter?.display_name || 'Unknown'} · ${Utils.formatDate(r.created_at)}`;
+  document.getElementById('rd-meta').innerHTML = `
+    <div><div class="t-label">Location</div><div style="margin-top:4px">${Utils.escapeHtml(r.location_name||'—')}</div></div>
+    <div><div class="t-label">Terrain</div><div style="margin-top:4px">${Utils.escapeHtml(r.terrain_type||'—')}</div></div>
+    <div><div class="t-label">Suggested Difficulty</div><div style="margin-top:4px">${r.suggested_difficulty}</div></div>
+    <div><div class="t-label">Distance</div><div style="margin-top:4px">${r.distance_miles} mi</div></div>`;
+  document.getElementById('rd-desc').textContent = r.description || 'No description provided.';
+  document.getElementById('rd-photos').innerHTML = (r.photos||[]).map(url => `<img src="${url}" style="width:100px;height:75px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">`).join('') || '<span style="font-size:12px;color:var(--text-3)">No photos submitted.</span>';
+  document.getElementById('rd-notes').value = r.admin_notes || '';
+
+  requestAnimationFrame(() => {
+    if (reviewMap) { reviewMap.map.remove(); reviewMap = null; }
+    reviewMap = new MotoMap('rd-map', { zoomControl: false }).init();
+    const coords = typeof r.coords === 'string' ? JSON.parse(r.coords) : r.coords;
+    if (coords && coords.length) {
+      L.polyline(coords, { color: '#FF6B00', weight: 4 }).addTo(reviewMap.map);
+      reviewMap.map.fitBounds(L.latLngBounds(coords), { padding: [20,20] });
+    }
+  });
+
+  document.getElementById('rd-approve-btn').onclick = () => approveRequest(r);
+  document.getElementById('rd-reject-btn').onclick = () => resolveRequest(r, 'rejected');
+  document.getElementById('rd-needsinfo-btn').onclick = () => resolveRequest(r, 'needs_info');
+}
+
+async function approveRequest(r) {
+  const notes = document.getElementById('rd-notes').value.trim();
+  const slug = Utils.slugify(r.trail_name) + '-' + Math.random().toString(36).slice(2,6);
+  const centroid = Utils.centroid(typeof r.coords === 'string' ? JSON.parse(r.coords) : r.coords);
+
+  const { data: trail, error } = await sb.from('trails').insert({
+    slug, name: r.trail_name, description: r.description, difficulty: r.suggested_difficulty,
+    terrain_type: r.terrain_type, surface_tags: r.surface_tags || [r.terrain_type],
+    distance_miles: r.distance_miles, elevation_gain_ft: r.elevation_gain_ft || 0,
+    location_name: r.location_name, county: r.county, state: r.state || 'TX',
+    lat: centroid[0], lng: centroid[1], coords: r.coords, conditions: 'Good',
+    is_verified: true, is_featured: false, submitted_by: r.submitted_by,
+    approved_by: adminProfile.id, request_id: r.id,
+  }).select().single();
+
+  if (error) { Toast.error('Failed to create trail: ' + error.message); return; }
+
+  await sb.from('trail_requests').update({
+    status: 'approved', admin_notes: notes, reviewed_by: adminProfile.id,
+    reviewed_at: new Date().toISOString(), resulting_trail_id: trail.id,
+  }).eq('id', r.id);
+
+  await sb.from('notifications').insert({
+    rider_id: r.submitted_by, type: 'trail_request_approved',
+    message: `Your trail request "${r.trail_name}" was approved and is now live!`,
+    link: `trail/${slug}`,
+  });
+
+  Toast.success('Trail approved and published!');
+  document.getElementById('request-detail-modal').classList.add('hidden');
+  switchSection('trail-requests');
+}
+
+async function resolveRequest(r, status) {
+  const notes = document.getElementById('rd-notes').value.trim();
+  await sb.from('trail_requests').update({
+    status, admin_notes: notes, reviewed_by: adminProfile.id, reviewed_at: new Date().toISOString(),
+  }).eq('id', r.id);
+  await sb.from('notifications').insert({
+    rider_id: r.submitted_by, type: 'trail_request_' + status,
+    message: status === 'rejected'
+      ? `Your trail request "${r.trail_name}" was not approved.${notes ? ' Reason: ' + notes : ''}`
+      : `Your trail request "${r.trail_name}" needs more information.${notes ? ' ' + notes : ''}`,
+  });
+  Toast.success(status === 'rejected' ? 'Request rejected.' : 'Marked as needing more info.');
+  document.getElementById('request-detail-modal').classList.add('hidden');
+  switchSection('trail-requests');
+}
+
+// ── LAP TIMES ─────────────────────────────────────────────────────────────
+async function renderLapTimes(el) {
+  const { data: laps } = await sb.from('lap_times')
+    .select('*, profiles!lap_times_rider_id_fkey(display_name,username), trails(name), bikes(year,make,model)')
+    .order('created_at', { ascending: false });
+
+  const pending = (laps || []).filter(l => l.status === 'pending');
+  const resolved = (laps || []).filter(l => l.status !== 'pending');
+
+  el.innerHTML = `
+  <div class="admin-page-title">LAP TIME SUBMISSIONS</div>
+  <div class="admin-page-sub">Verify and approve rider-submitted times before they hit the leaderboard.</div>
+
+  <div class="t-label mb-16">Pending (${pending.length})</div>
+  <div class="card">
+    ${pending.length ? pending.map(l => `
+      <div class="flex-between p-20" style="border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600;color:var(--white)">${Utils.escapeHtml(l.profiles?.display_name||'Rider')} <span style="color:var(--text-3);font-weight:400">on</span> ${Utils.escapeHtml(l.trails?.name||'Trail')}</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:4px">${l.bikes?`${l.bikes.year} ${l.bikes.make} ${l.bikes.model} · `:''}${l.notes ? Utils.escapeHtml(l.notes) + ' · ' : ''}${Utils.timeAgo(l.created_at)}</div>
+          ${l.video_url ? `<a href="${l.video_url}" target="_blank" style="font-size:11px;color:var(--blue)">▶ View proof video</a>` : ''}
+        </div>
+        <div class="flex-center gap-12">
+          <div class="lb-time" style="font-size:18px">${l.time_display}</div>
+          <button class="btn btn-sm btn-success" onclick="approveLap('${l.id}')">Approve</button>
+          <button class="btn btn-sm btn-danger" onclick="rejectLap('${l.id}')">Reject</button>
+        </div>
+      </div>`).join('') : `<div class="p-32 text-center" style="color:var(--text-3);font-size:13px">No pending lap times.</div>`}
+  </div>
+
+  ${resolved.length ? `
+  <div class="t-label mb-16 mt-32">Recent History</div>
+  <div class="card">
+    <table class="admin-table">
+      <thead><tr><th>Rider</th><th>Trail</th><th>Time</th><th>Status</th></tr></thead>
+      <tbody>
+        ${resolved.slice(0,30).map(l => `
+        <tr>
+          <td>${Utils.escapeHtml(l.profiles?.display_name||'Rider')}</td>
+          <td>${Utils.escapeHtml(l.trails?.name||'—')}</td>
+          <td class="lb-time">${l.time_display}</td>
+          <td><span class="badge badge-${l.status}">${l.status}</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>` : ''}`;
+}
+
+async function approveLap(lapId) {
+  const { data: lap } = await sb.from('lap_times').select('*').eq('id', lapId).single();
+  await sb.from('lap_times').update({ status: 'approved', reviewed_by: adminProfile.id }).eq('id', lapId);
+
+  // Recompute trail record flag
+  const { data: allApproved } = await sb.from('lap_times').select('id,time_ms').eq('trail_id', lap.trail_id).eq('status','approved').order('time_ms', { ascending: true });
+  if (allApproved && allApproved.length) {
+    await sb.from('lap_times').update({ is_record: false }).eq('trail_id', lap.trail_id);
+    await sb.from('lap_times').update({ is_record: true }).eq('id', allApproved[0].id);
+  }
+
+  await sb.from('notifications').insert({
+    rider_id: lap.rider_id, type: 'lap_approved',
+    message: `Your lap time of ${lap.time_display} was approved!`,
+  });
+
+  Toast.success('Lap time approved.');
+  switchSection('lap-times');
+}
+
+async function rejectLap(lapId) {
+  const { data: lap } = await sb.from('lap_times').select('*').eq('id', lapId).single();
+  await sb.from('lap_times').update({ status: 'rejected', reviewed_by: adminProfile.id }).eq('id', lapId);
+  await sb.from('notifications').insert({
+    rider_id: lap.rider_id, type: 'lap_rejected',
+    message: `Your submitted lap time of ${lap.time_display} was not approved.`,
+  });
+  Toast.success('Lap time rejected.');
+  switchSection('lap-times');
+}
+
+// ── REVIEWS MODERATION ────────────────────────────────────────────────────
+async function renderReviewsModeration(el) {
+  const { data: reviews } = await sb.from('trail_reviews')
+    .select('*, profiles!trail_reviews_rider_id_fkey(display_name), trails(name)')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  el.innerHTML = `
+  <div class="admin-page-title">REVIEWS</div>
+  <div class="admin-page-sub">All trail reviews are public immediately. Remove any that violate community guidelines.</div>
+  <div class="card">
+    ${(reviews||[]).length ? reviews.map(r => `
+      <div class="flex-between p-20" style="border-bottom:1px solid var(--border)">
+        <div style="flex:1">
+          <div style="font-weight:600">${Utils.escapeHtml(r.profiles?.display_name||'Rider')} on ${Utils.escapeHtml(r.trails?.name||'Trail')} <span style="color:var(--orange)">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span></div>
+          <div style="font-size:13px;color:var(--text-2);margin-top:6px">${Utils.escapeHtml(r.body||'')}</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:6px">${Utils.timeAgo(r.created_at)}</div>
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="deleteReview('${r.id}')">Remove</button>
+      </div>`).join('') : `<div class="p-32 text-center" style="color:var(--text-3);font-size:13px">No reviews yet.</div>`}
+  </div>`;
+}
+async function deleteReview(id) {
+  if (!confirm('Permanently remove this review?')) return;
+  await sb.from('trail_reviews').delete().eq('id', id);
+  Toast.success('Review removed.');
+  switchSection('reviews');
+}
+
+// ── TRAILS MANAGEMENT ─────────────────────────────────────────────────────
+async function renderTrailsManage(el) {
+  const trails = await TrailsAPI.getAll();
+  el.innerHTML = `
+  <div class="admin-page-title">TRAILS</div>
+  <div class="admin-page-sub">${trails.length} live trail${trails.length!==1?'s':''} on the platform.</div>
+  <div class="card">
+    ${trails.length ? `
+    <table class="admin-table">
+      <thead><tr><th>Name</th><th>Difficulty</th><th>Distance</th><th>Featured</th><th>Actions</th></tr></thead>
+      <tbody>
+        ${trails.map(t => `
+        <tr>
+          <td>${Utils.escapeHtml(t.name)}</td>
+          <td><span class="badge ${Utils.diffBadgeClass(t.difficulty)}">${t.difficulty}</span></td>
+          <td>${t.distance_miles} mi</td>
+          <td>${t.is_featured ? '⭐ Yes' : '—'}</td>
+          <td>
+            <button class="btn btn-sm btn-ghost" onclick="toggleFeatured('${t.id}', ${!t.is_featured})">${t.is_featured ? 'Unfeature' : 'Feature'}</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteTrail('${t.id}')">Delete</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : `<div class="p-32 text-center" style="color:var(--text-3);font-size:13px">No trails yet. Approve a trail request to create one.</div>`}
+  </div>`;
+}
+async function toggleFeatured(id, value) {
+  await sb.from('trails').update({ is_featured: value }).eq('id', id);
+  Toast.success(value ? 'Trail featured.' : 'Trail unfeatured.');
+  switchSection('trails');
+}
+async function deleteTrail(id) {
+  if (!confirm('Permanently delete this trail and all its lap times/reviews? This cannot be undone.')) return;
+  await sb.from('trails').delete().eq('id', id);
+  Toast.success('Trail deleted.');
+  switchSection('trails');
+}
+
+// ── RIDERS MANAGEMENT ─────────────────────────────────────────────────────
+async function renderRidersManage(el) {
+  const riders = await RidersAPI.getAll();
+  el.innerHTML = `
+  <div class="admin-page-title">RIDERS</div>
+  <div class="admin-page-sub">${riders.length} registered rider${riders.length!==1?'s':''}.</div>
+  <div class="card">
+    ${riders.length ? `
+    <table class="admin-table">
+      <thead><tr><th>Rider</th><th>Email/Username</th><th>Level</th><th>Joined</th><th>Admin</th><th>Verified</th></tr></thead>
+      <tbody>
+        ${riders.map(r => `
+        <tr>
+          <td>${Utils.escapeHtml(r.display_name)}</td>
+          <td style="color:var(--text-3)">@${Utils.escapeHtml(r.username)}</td>
+          <td>${r.riding_level}</td>
+          <td style="color:var(--text-3)">${Utils.formatDate(r.created_at)}</td>
+          <td>
+            <button class="btn btn-sm ${r.is_admin?'btn-success':'btn-ghost'}" onclick="toggleAdmin('${r.id}', ${!r.is_admin})">${r.is_admin?'Yes ✓':'No'}</button>
+          </td>
+          <td>
+            <button class="btn btn-sm ${r.is_verified?'btn-success':'btn-ghost'}" onclick="toggleVerified('${r.id}', ${!r.is_verified})">${r.is_verified?'Yes ✓':'No'}</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : `<div class="p-32 text-center" style="color:var(--text-3);font-size:13px">No riders registered yet.</div>`}
+  </div>`;
+}
+async function toggleAdmin(id, value) {
+  if (value && !confirm('Grant full admin access to this rider?')) return;
+  await sb.from('profiles').update({ is_admin: value }).eq('id', id);
+  Toast.success(value ? 'Admin access granted.' : 'Admin access removed.');
+  switchSection('riders');
+}
+async function toggleVerified(id, value) {
+  await sb.from('profiles').update({ is_verified: value }).eq('id', id);
+  Toast.success(value ? 'Rider verified.' : 'Verification removed.');
+  switchSection('riders');
+}
+
+// ── CONNECTIONS (integration settings) ───────────────────────────────────
+function renderConnections(el) {
+  const hasMapbox = !!CFG.MAPBOX_TOKEN;
+  el.innerHTML = `
+  <div class="admin-page-title">CONNECTIONS</div>
+  <div class="admin-page-sub">External services MotoHub talks to. Most are configured by editing <code style="color:var(--orange)">config.js</code> in the project root.</div>
+
+  <div class="admin-connection-card">
+    <div class="admin-connection-header">
+      <div class="admin-connection-title">🗄 Supabase Database</div>
+      <div class="connection-status connected"><div class="connection-dot connected"></div>Connected</div>
+    </div>
+    <p style="font-size:13px;color:var(--text-2);line-height:1.7">Your live database. All accounts, trails, lap times, and posts are stored here.</p>
+    <div class="form-group mt-12"><label class="form-label">Project URL</label><input class="form-input" value="${CFG.SUPABASE_URL}" readonly></div>
+  </div>
+
+  <div class="admin-connection-card">
+    <div class="admin-connection-header">
+      <div class="admin-connection-title">🗺 Map Tiles</div>
+      <div class="connection-status ${hasMapbox ? 'connected' : 'pending'}"><div class="connection-dot ${hasMapbox?'connected':''}"></div>${hasMapbox ? 'Mapbox Active' : 'Using Free OpenStreetMap'}</div>
+    </div>
+    <p style="font-size:13px;color:var(--text-2);line-height:1.7">${hasMapbox ? 'Premium Mapbox terrain tiles are active.' : 'Currently using free OpenStreetMap tiles — no setup required. For premium satellite/terrain tiles, get a free token at '}${hasMapbox ? '' : '<a href="https://account.mapbox.com" target="_blank" style="color:var(--orange)">account.mapbox.com</a> and paste it into <code style="color:var(--orange)">config.js</code> → <code>MAPBOX_TOKEN</code>, then set <code>MAP_PROVIDER</code> to <code>"mapbox"</code>.'}</p>
+  </div>
+
+  <div class="admin-connection-card">
+    <div class="admin-connection-header">
+      <div class="admin-connection-title">☀️ Weather</div>
+      <div class="connection-status connected"><div class="connection-dot connected"></div>Connected — Open-Meteo</div>
+    </div>
+    <p style="font-size:13px;color:var(--text-2);line-height:1.7">Live weather and 7-day forecasts on every trail page, powered by Open-Meteo — free, no API key required, no setup needed.</p>
+  </div>
+
+  <div class="admin-connection-card">
+    <div class="admin-connection-header">
+      <div class="admin-connection-title">📦 File Storage</div>
+      <div class="connection-status connected"><div class="connection-dot connected"></div>Connected — Supabase Storage</div>
+    </div>
+    <p style="font-size:13px;color:var(--text-2);line-height:1.7">Trail request photos and post images upload to the <code style="color:var(--orange)">motohub-uploads</code> bucket, created automatically by the schema SQL.</p>
+  </div>
+
+  <div class="admin-connection-card">
+    <div class="admin-connection-header">
+      <div class="admin-connection-title">🔑 Authentication</div>
+      <div class="connection-status connected"><div class="connection-dot connected"></div>Connected — Supabase Auth</div>
+    </div>
+    <p style="font-size:13px;color:var(--text-2);line-height:1.7">Real email/password accounts. By default Supabase requires email confirmation on signup — you can disable this in your Supabase project under <strong style="color:var(--text-1)">Authentication → Providers → Email</strong> if you want instant access during testing.</p>
+  </div>`;
+}
+
+</script>
+</body>
+</html>
