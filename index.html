@@ -99,10 +99,7 @@
    MOTOHUB — MAIN APP SCRIPT
    Router + Page Renderers + Canvas Art + Modal Logic
    ============================================================ */
-const { Auth, TrailsAPI, TrailRequestsAPI, LapTimesAPI, BikesAPI, CommunityAPI,
-        RidersAPI, NotificationsAPI, StatsAPI, WeatherAPI, Utils, Toast,
-        MotoMap, TrailTracer, SUPABASE_READY, renderSetupGateIfNeeded, CFG, sb } = window.MotoHub;
-
+const MH = window.MotoHub;
 const app = document.getElementById('app');
 let activeMotoMap = null; // tracked so we can clean up Leaflet instances between page loads
 
