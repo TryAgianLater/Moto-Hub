@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MotoHub Admin</title>
-<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 </head>
 <body>
@@ -31,12 +31,8 @@
 <script>
 /* ============================================================
    MOTOHUB ADMIN PANEL
-   Real auth-gated admin dashboard backed by Supabase.
-   Only profiles with is_admin = true (set manually once via
-   SQL — see README.md) can access anything past the login screen.
    ============================================================ */
-const { Auth, TrailsAPI, TrailRequestsAPI, LapTimesAPI, BikesAPI,
-        RidersAPI, StatsAPI, Utils, Toast, MotoMap, SUPABASE_READY, renderSetupGateIfNeeded, CFG, sb } = window.MotoHub;
+const MH = window.MotoHub;
 
 const app = document.getElementById('app');
 let adminProfile = null;
@@ -46,19 +42,19 @@ function loadingHTML() {
   return `<div class="page flex-center" style="justify-content:center"><div class="spinner"></div></div>`;
 }
 
-// ── BOOT: check auth + admin role ──────────────────────────────────────
+// ── BOOT ──────────────────────────────────────────────────────────────
 (async function boot() {
   app.innerHTML = loadingHTML();
-  if (renderSetupGateIfNeeded(app)) return;
+  if (MH.renderSetupGateIfNeeded(app)) return;
 
-  const profile = await Auth.getCurrentProfile();
+  const profile = await MH.Auth.getCurrentProfile();
   if (!profile) { renderLoginScreen(); return; }
   if (!profile.is_admin) { renderAccessDenied(profile); return; }
   adminProfile = profile;
   renderAdminShell();
 })();
 
-// ── LOGIN SCREEN ─────────────────────────────────────────────────────────
+// ── LOGIN SCREEN ─────────────────────────────────────────────────────
 function renderLoginScreen() {
   app.innerHTML = `
   <div class="page auth-page">
@@ -87,42 +83,42 @@ async function doAdminLogin() {
   errEl.classList.remove('show');
   if (!email || !password) { errEl.textContent = 'Enter both email and password.'; errEl.classList.add('show'); return; }
   const btn = document.getElementById('login-btn'); btn.disabled = true; btn.textContent = 'Logging in…';
-  const { error } = await Auth.login(email, password);
+  const { error } = await MH.Auth.login(email, password);
   btn.disabled = false; btn.textContent = 'Log In';
   if (error) { errEl.textContent = error; errEl.classList.add('show'); return; }
-  const profile = await Auth.getCurrentProfile(true);
+  const profile = await MH.Auth.getCurrentProfile(true);
   if (!profile) { errEl.textContent = 'Could not load profile.'; errEl.classList.add('show'); return; }
   if (!profile.is_admin) { renderAccessDenied(profile); return; }
   adminProfile = profile;
-  Toast.success('Welcome, admin.');
+  MH.Toast.success('Welcome, admin.');
   renderAdminShell();
 }
 
-// ── ACCESS DENIED ─────────────────────────────────────────────────────────
+// ── ACCESS DENIED ─────────────────────────────────────────────────────
 function renderAccessDenied(profile) {
   app.innerHTML = `
   <div class="page flex-center" style="justify-content:center;flex-direction:column;gap:16px;text-align:center;padding:40px">
     <div style="font-size:48px">🔒</div>
     <div class="t-display" style="font-size:36px;color:var(--white)">ACCESS DENIED</div>
-    <p style="color:var(--text-3);max-width:420px">Signed in as <strong style="color:var(--text-1)">${Utils.escapeHtml(profile.display_name)}</strong>, but this account doesn't have admin access.</p>
+    <p style="color:var(--text-3);max-width:420px">Signed in as <strong style="color:var(--text-1)">${MH.Utils.escapeHtml(profile.display_name)}</strong>, but this account doesn't have admin access.</p>
     <div class="card p-20" style="max-width:480px;text-align:left;margin-top:8px">
       <div class="t-label mb-8">To grant admin access</div>
       <p style="font-size:12px;color:var(--text-2);line-height:1.8">Run this once in your Supabase SQL Editor, replacing the email:</p>
       <pre style="background:var(--surface-3);padding:12px;border-radius:var(--radius-sm);font-size:11px;color:var(--orange);overflow-x:auto;margin-top:8px">update public.profiles set is_admin = true
-where id = (select id from auth.users where email = '${Utils.escapeHtml(profile.email||'you@example.com')}');</pre>
+where id = (select id from auth.users where email = '${MH.Utils.escapeHtml(profile.email||'you@example.com')}');</pre>
     </div>
     <div class="flex gap-12 mt-16">
-      <button class="btn btn-outline" onclick="MotoHub.Auth.logout().then(()=>location.reload())">Log Out</button>
+      <button class="btn btn-outline" onclick="MH.Auth.logout().then(()=>location.reload())">Log Out</button>
       <a href="index.html" class="btn btn-primary">Back to Site</a>
     </div>
   </div>`;
 }
 
-// ── ADMIN SHELL ───────────────────────────────────────────────────────────
+// ── ADMIN SHELL ───────────────────────────────────────────────────────
 function renderAdminShell() {
   document.getElementById('nav-right').innerHTML = `
-    <span style="font-size:12px;color:var(--text-2);margin-right:8px">${Utils.escapeHtml(adminProfile.display_name)}</span>
-    <button class="btn btn-sm btn-ghost" onclick="MotoHub.Auth.logout().then(()=>location.reload())">Log Out</button>
+    <span style="font-size:12px;color:var(--text-2);margin-right:8px">${MH.Utils.escapeHtml(adminProfile.display_name)}</span>
+    <button class="btn btn-sm btn-ghost" onclick="MH.Auth.logout().then(()=>location.reload())">Log Out</button>
     <a href="index.html" class="btn btn-sm btn-ghost">← Back to Site</a>`;
 
   app.innerHTML = `
@@ -171,12 +167,12 @@ async function renderSection(sec) {
   if (sec === 'connections') return renderConnections(el);
 }
 
-// ── OVERVIEW ──────────────────────────────────────────────────────────────
+// ── OVERVIEW ──────────────────────────────────────────────────────────
 async function renderOverview(el) {
   const [stats, pendingRequests, pendingLaps] = await Promise.all([
-    StatsAPI.getPlatformStats(),
-    sb.from('trail_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-    sb.from('lap_times').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    MH.StatsAPI.getPlatformStats(),
+    MH.sb.from('trail_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    MH.sb.from('lap_times').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
   ]);
 
   el.innerHTML = `
@@ -216,9 +212,9 @@ async function renderOverview(el) {
   </div>` : ''}`;
 }
 
-// ── TRAIL REQUESTS ────────────────────────────────────────────────────────
+// ── TRAIL REQUESTS ────────────────────────────────────────────────────
 async function renderTrailRequests(el) {
-  const requests = await TrailRequestsAPI.getAll();
+  const requests = await MH.TrailRequestsAPI.getAll();
   const pending = requests.filter(r => r.status === 'pending' || r.status === 'under_review');
   const resolved = requests.filter(r => r.status === 'approved' || r.status === 'rejected' || r.status === 'needs_info');
 
@@ -239,10 +235,10 @@ async function renderTrailRequests(el) {
       <tbody>
         ${resolved.map(r => `
         <tr>
-          <td>${Utils.escapeHtml(r.trail_name)}</td>
-          <td>${Utils.escapeHtml(r.submitter?.display_name||'Unknown')}</td>
+          <td>${MH.Utils.escapeHtml(r.trail_name)}</td>
+          <td>${MH.Utils.escapeHtml(r.submitter?.display_name||'Unknown')}</td>
           <td><span class="badge badge-${r.status}">${r.status.replace('_',' ')}</span></td>
-          <td style="color:var(--text-3)">${Utils.formatDate(r.created_at)}</td>
+          <td style="color:var(--text-3)">${MH.Utils.formatDate(r.created_at)}</td>
         </tr>`).join('')}
       </tbody>
     </table>
@@ -272,9 +268,9 @@ function trailRequestRowHTML(r) {
   <div class="card p-20 mb-12">
     <div class="flex-between">
       <div>
-        <div class="t-display" style="font-size:22px;color:var(--white)">${Utils.escapeHtml(r.trail_name)}</div>
-        <div style="font-size:12px;color:var(--text-3);margin-top:2px">📍 ${Utils.escapeHtml(r.location_name||'')} · ${r.distance_miles||0} mi · ${Utils.escapeHtml(r.terrain_type||'')} · ${r.suggested_difficulty}</div>
-        <div style="font-size:11px;color:var(--text-3);margin-top:4px">Submitted by <strong style="color:var(--text-2)">${Utils.escapeHtml(r.submitter?.display_name||'Unknown')}</strong> · ${Utils.timeAgo(r.created_at)}</div>
+        <div class="t-display" style="font-size:22px;color:var(--white)">${MH.Utils.escapeHtml(r.trail_name)}</div>
+        <div style="font-size:12px;color:var(--text-3);margin-top:2px">📍 ${MH.Utils.escapeHtml(r.location_name||'')} · ${r.distance_miles||0} mi · ${MH.Utils.escapeHtml(r.terrain_type||'')} · ${r.suggested_difficulty}</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px">Submitted by <strong style="color:var(--text-2)">${MH.Utils.escapeHtml(r.submitter?.display_name||'Unknown')}</strong> · ${MH.Utils.timeAgo(r.created_at)}</div>
       </div>
       <span class="badge badge-${r.status}">${r.status.replace('_',' ')}</span>
     </div>
@@ -285,10 +281,10 @@ function trailRequestRowHTML(r) {
 function openRequestDetail(r) {
   document.getElementById('request-detail-modal').classList.remove('hidden');
   document.getElementById('rd-title').textContent = r.trail_name.toUpperCase();
-  document.getElementById('rd-sub').textContent = `Submitted by ${r.submitter?.display_name || 'Unknown'} · ${Utils.formatDate(r.created_at)}`;
+  document.getElementById('rd-sub').textContent = `Submitted by ${r.submitter?.display_name || 'Unknown'} · ${MH.Utils.formatDate(r.created_at)}`;
   document.getElementById('rd-meta').innerHTML = `
-    <div><div class="t-label">Location</div><div style="margin-top:4px">${Utils.escapeHtml(r.location_name||'—')}</div></div>
-    <div><div class="t-label">Terrain</div><div style="margin-top:4px">${Utils.escapeHtml(r.terrain_type||'—')}</div></div>
+    <div><div class="t-label">Location</div><div style="margin-top:4px">${MH.Utils.escapeHtml(r.location_name||'—')}</div></div>
+    <div><div class="t-label">Terrain</div><div style="margin-top:4px">${MH.Utils.escapeHtml(r.terrain_type||'—')}</div></div>
     <div><div class="t-label">Suggested Difficulty</div><div style="margin-top:4px">${r.suggested_difficulty}</div></div>
     <div><div class="t-label">Distance</div><div style="margin-top:4px">${r.distance_miles} mi</div></div>`;
   document.getElementById('rd-desc').textContent = r.description || 'No description provided.';
@@ -297,7 +293,7 @@ function openRequestDetail(r) {
 
   requestAnimationFrame(() => {
     if (reviewMap) { reviewMap.map.remove(); reviewMap = null; }
-    reviewMap = new MotoMap('rd-map', { zoomControl: false }).init();
+    reviewMap = new MH.MotoMap('rd-map', { zoomControl: false }).init();
     const coords = typeof r.coords === 'string' ? JSON.parse(r.coords) : r.coords;
     if (coords && coords.length) {
       L.polyline(coords, { color: '#FF6B00', weight: 4 }).addTo(reviewMap.map);
@@ -312,10 +308,10 @@ function openRequestDetail(r) {
 
 async function approveRequest(r) {
   const notes = document.getElementById('rd-notes').value.trim();
-  const slug = Utils.slugify(r.trail_name) + '-' + Math.random().toString(36).slice(2,6);
-  const centroid = Utils.centroid(typeof r.coords === 'string' ? JSON.parse(r.coords) : r.coords);
+  const slug = MH.Utils.slugify(r.trail_name) + '-' + Math.random().toString(36).slice(2,6);
+  const centroid = MH.Utils.centroid(typeof r.coords === 'string' ? JSON.parse(r.coords) : r.coords);
 
-  const { data: trail, error } = await sb.from('trails').insert({
+  const { data: trail, error } = await MH.sb.from('trails').insert({
     slug, name: r.trail_name, description: r.description, difficulty: r.suggested_difficulty,
     terrain_type: r.terrain_type, surface_tags: r.surface_tags || [r.terrain_type],
     distance_miles: r.distance_miles, elevation_gain_ft: r.elevation_gain_ft || 0,
@@ -325,43 +321,43 @@ async function approveRequest(r) {
     approved_by: adminProfile.id, request_id: r.id,
   }).select().single();
 
-  if (error) { Toast.error('Failed to create trail: ' + error.message); return; }
+  if (error) { MH.Toast.error('Failed to create trail: ' + error.message); return; }
 
-  await sb.from('trail_requests').update({
+  await MH.sb.from('trail_requests').update({
     status: 'approved', admin_notes: notes, reviewed_by: adminProfile.id,
     reviewed_at: new Date().toISOString(), resulting_trail_id: trail.id,
   }).eq('id', r.id);
 
-  await sb.from('notifications').insert({
+  await MH.sb.from('notifications').insert({
     rider_id: r.submitted_by, type: 'trail_request_approved',
     message: `Your trail request "${r.trail_name}" was approved and is now live!`,
     link: `trail/${slug}`,
   });
 
-  Toast.success('Trail approved and published!');
+  MH.Toast.success('Trail approved and published!');
   document.getElementById('request-detail-modal').classList.add('hidden');
   switchSection('trail-requests');
 }
 
 async function resolveRequest(r, status) {
   const notes = document.getElementById('rd-notes').value.trim();
-  await sb.from('trail_requests').update({
+  await MH.sb.from('trail_requests').update({
     status, admin_notes: notes, reviewed_by: adminProfile.id, reviewed_at: new Date().toISOString(),
   }).eq('id', r.id);
-  await sb.from('notifications').insert({
+  await MH.sb.from('notifications').insert({
     rider_id: r.submitted_by, type: 'trail_request_' + status,
     message: status === 'rejected'
       ? `Your trail request "${r.trail_name}" was not approved.${notes ? ' Reason: ' + notes : ''}`
       : `Your trail request "${r.trail_name}" needs more information.${notes ? ' ' + notes : ''}`,
   });
-  Toast.success(status === 'rejected' ? 'Request rejected.' : 'Marked as needing more info.');
+  MH.Toast.success(status === 'rejected' ? 'Request rejected.' : 'Marked as needing more info.');
   document.getElementById('request-detail-modal').classList.add('hidden');
   switchSection('trail-requests');
 }
 
-// ── LAP TIMES ─────────────────────────────────────────────────────────────
+// ── LAP TIMES ─────────────────────────────────────────────────────────
 async function renderLapTimes(el) {
-  const { data: laps } = await sb.from('lap_times')
+  const { data: laps } = await MH.sb.from('lap_times')
     .select('*, profiles!lap_times_rider_id_fkey(display_name,username), trails(name), bikes(year,make,model)')
     .order('created_at', { ascending: false });
 
@@ -377,8 +373,8 @@ async function renderLapTimes(el) {
     ${pending.length ? pending.map(l => `
       <div class="flex-between p-20" style="border-bottom:1px solid var(--border)">
         <div>
-          <div style="font-weight:600;color:var(--white)">${Utils.escapeHtml(l.profiles?.display_name||'Rider')} <span style="color:var(--text-3);font-weight:400">on</span> ${Utils.escapeHtml(l.trails?.name||'Trail')}</div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:4px">${l.bikes?`${l.bikes.year} ${l.bikes.make} ${l.bikes.model} · `:''}${l.notes ? Utils.escapeHtml(l.notes) + ' · ' : ''}${Utils.timeAgo(l.created_at)}</div>
+          <div style="font-weight:600;color:var(--white)">${MH.Utils.escapeHtml(l.profiles?.display_name||'Rider')} <span style="color:var(--text-3);font-weight:400">on</span> ${MH.Utils.escapeHtml(l.trails?.name||'Trail')}</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:4px">${l.bikes?`${l.bikes.year} ${l.bikes.make} ${l.bikes.model} · `:''}${l.notes ? MH.Utils.escapeHtml(l.notes) + ' · ' : ''}${MH.Utils.timeAgo(l.created_at)}</div>
           ${l.video_url ? `<a href="${l.video_url}" target="_blank" style="font-size:11px;color:var(--blue)">▶ View proof video</a>` : ''}
         </div>
         <div class="flex-center gap-12">
@@ -397,8 +393,8 @@ async function renderLapTimes(el) {
       <tbody>
         ${resolved.slice(0,30).map(l => `
         <tr>
-          <td>${Utils.escapeHtml(l.profiles?.display_name||'Rider')}</td>
-          <td>${Utils.escapeHtml(l.trails?.name||'—')}</td>
+          <td>${MH.Utils.escapeHtml(l.profiles?.display_name||'Rider')}</td>
+          <td>${MH.Utils.escapeHtml(l.trails?.name||'—')}</td>
           <td class="lb-time">${l.time_display}</td>
           <td><span class="badge badge-${l.status}">${l.status}</span></td>
         </tr>`).join('')}
@@ -408,39 +404,38 @@ async function renderLapTimes(el) {
 }
 
 async function approveLap(lapId) {
-  const { data: lap } = await sb.from('lap_times').select('*').eq('id', lapId).single();
-  await sb.from('lap_times').update({ status: 'approved', reviewed_by: adminProfile.id }).eq('id', lapId);
+  const { data: lap } = await MH.sb.from('lap_times').select('*').eq('id', lapId).single();
+  await MH.sb.from('lap_times').update({ status: 'approved', reviewed_by: adminProfile.id }).eq('id', lapId);
 
-  // Recompute trail record flag
-  const { data: allApproved } = await sb.from('lap_times').select('id,time_ms').eq('trail_id', lap.trail_id).eq('status','approved').order('time_ms', { ascending: true });
+  const { data: allApproved } = await MH.sb.from('lap_times').select('id,time_ms').eq('trail_id', lap.trail_id).eq('status','approved').order('time_ms', { ascending: true });
   if (allApproved && allApproved.length) {
-    await sb.from('lap_times').update({ is_record: false }).eq('trail_id', lap.trail_id);
-    await sb.from('lap_times').update({ is_record: true }).eq('id', allApproved[0].id);
+    await MH.sb.from('lap_times').update({ is_record: false }).eq('trail_id', lap.trail_id);
+    await MH.sb.from('lap_times').update({ is_record: true }).eq('id', allApproved[0].id);
   }
 
-  await sb.from('notifications').insert({
+  await MH.sb.from('notifications').insert({
     rider_id: lap.rider_id, type: 'lap_approved',
     message: `Your lap time of ${lap.time_display} was approved!`,
   });
 
-  Toast.success('Lap time approved.');
+  MH.Toast.success('Lap time approved.');
   switchSection('lap-times');
 }
 
 async function rejectLap(lapId) {
-  const { data: lap } = await sb.from('lap_times').select('*').eq('id', lapId).single();
-  await sb.from('lap_times').update({ status: 'rejected', reviewed_by: adminProfile.id }).eq('id', lapId);
-  await sb.from('notifications').insert({
+  const { data: lap } = await MH.sb.from('lap_times').select('*').eq('id', lapId).single();
+  await MH.sb.from('lap_times').update({ status: 'rejected', reviewed_by: adminProfile.id }).eq('id', lapId);
+  await MH.sb.from('notifications').insert({
     rider_id: lap.rider_id, type: 'lap_rejected',
     message: `Your submitted lap time of ${lap.time_display} was not approved.`,
   });
-  Toast.success('Lap time rejected.');
+  MH.Toast.success('Lap time rejected.');
   switchSection('lap-times');
 }
 
-// ── REVIEWS MODERATION ────────────────────────────────────────────────────
+// ── REVIEWS MODERATION ────────────────────────────────────────────────
 async function renderReviewsModeration(el) {
-  const { data: reviews } = await sb.from('trail_reviews')
+  const { data: reviews } = await MH.sb.from('trail_reviews')
     .select('*, profiles!trail_reviews_rider_id_fkey(display_name), trails(name)')
     .order('created_at', { ascending: false })
     .limit(50);
@@ -452,9 +447,9 @@ async function renderReviewsModeration(el) {
     ${(reviews||[]).length ? reviews.map(r => `
       <div class="flex-between p-20" style="border-bottom:1px solid var(--border)">
         <div style="flex:1">
-          <div style="font-weight:600">${Utils.escapeHtml(r.profiles?.display_name||'Rider')} on ${Utils.escapeHtml(r.trails?.name||'Trail')} <span style="color:var(--orange)">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span></div>
-          <div style="font-size:13px;color:var(--text-2);margin-top:6px">${Utils.escapeHtml(r.body||'')}</div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:6px">${Utils.timeAgo(r.created_at)}</div>
+          <div style="font-weight:600">${MH.Utils.escapeHtml(r.profiles?.display_name||'Rider')} on ${MH.Utils.escapeHtml(r.trails?.name||'Trail')} <span style="color:var(--orange)">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span></div>
+          <div style="font-size:13px;color:var(--text-2);margin-top:6px">${MH.Utils.escapeHtml(r.body||'')}</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:6px">${MH.Utils.timeAgo(r.created_at)}</div>
         </div>
         <button class="btn btn-sm btn-danger" onclick="deleteReview('${r.id}')">Remove</button>
       </div>`).join('') : `<div class="p-32 text-center" style="color:var(--text-3);font-size:13px">No reviews yet.</div>`}
@@ -462,14 +457,14 @@ async function renderReviewsModeration(el) {
 }
 async function deleteReview(id) {
   if (!confirm('Permanently remove this review?')) return;
-  await sb.from('trail_reviews').delete().eq('id', id);
-  Toast.success('Review removed.');
+  await MH.sb.from('trail_reviews').delete().eq('id', id);
+  MH.Toast.success('Review removed.');
   switchSection('reviews');
 }
 
-// ── TRAILS MANAGEMENT ─────────────────────────────────────────────────────
+// ── TRAILS MANAGEMENT ─────────────────────────────────────────────────
 async function renderTrailsManage(el) {
-  const trails = await TrailsAPI.getAll();
+  const trails = await MH.TrailsAPI.getAll();
   el.innerHTML = `
   <div class="admin-page-title">TRAILS</div>
   <div class="admin-page-sub">${trails.length} live trail${trails.length!==1?'s':''} on the platform.</div>
@@ -480,8 +475,8 @@ async function renderTrailsManage(el) {
       <tbody>
         ${trails.map(t => `
         <tr>
-          <td>${Utils.escapeHtml(t.name)}</td>
-          <td><span class="badge ${Utils.diffBadgeClass(t.difficulty)}">${t.difficulty}</span></td>
+          <td>${MH.Utils.escapeHtml(t.name)}</td>
+          <td><span class="badge ${MH.Utils.diffBadgeClass(t.difficulty)}">${t.difficulty}</span></td>
           <td>${t.distance_miles} mi</td>
           <td>${t.is_featured ? '⭐ Yes' : '—'}</td>
           <td>
@@ -494,20 +489,20 @@ async function renderTrailsManage(el) {
   </div>`;
 }
 async function toggleFeatured(id, value) {
-  await sb.from('trails').update({ is_featured: value }).eq('id', id);
-  Toast.success(value ? 'Trail featured.' : 'Trail unfeatured.');
+  await MH.sb.from('trails').update({ is_featured: value }).eq('id', id);
+  MH.Toast.success(value ? 'Trail featured.' : 'Trail unfeatured.');
   switchSection('trails');
 }
 async function deleteTrail(id) {
   if (!confirm('Permanently delete this trail and all its lap times/reviews? This cannot be undone.')) return;
-  await sb.from('trails').delete().eq('id', id);
-  Toast.success('Trail deleted.');
+  await MH.sb.from('trails').delete().eq('id', id);
+  MH.Toast.success('Trail deleted.');
   switchSection('trails');
 }
 
-// ── RIDERS MANAGEMENT ─────────────────────────────────────────────────────
+// ── RIDERS MANAGEMENT ─────────────────────────────────────────────────
 async function renderRidersManage(el) {
-  const riders = await RidersAPI.getAll();
+  const riders = await MH.RidersAPI.getAll();
   el.innerHTML = `
   <div class="admin-page-title">RIDERS</div>
   <div class="admin-page-sub">${riders.length} registered rider${riders.length!==1?'s':''}.</div>
@@ -518,10 +513,10 @@ async function renderRidersManage(el) {
       <tbody>
         ${riders.map(r => `
         <tr>
-          <td>${Utils.escapeHtml(r.display_name)}</td>
-          <td style="color:var(--text-3)">@${Utils.escapeHtml(r.username)}</td>
+          <td>${MH.Utils.escapeHtml(r.display_name)}</td>
+          <td style="color:var(--text-3)">@${MH.Utils.escapeHtml(r.username)}</td>
           <td>${r.riding_level}</td>
-          <td style="color:var(--text-3)">${Utils.formatDate(r.created_at)}</td>
+          <td style="color:var(--text-3)">${MH.Utils.formatDate(r.created_at)}</td>
           <td>
             <button class="btn btn-sm ${r.is_admin?'btn-success':'btn-ghost'}" onclick="toggleAdmin('${r.id}', ${!r.is_admin})">${r.is_admin?'Yes ✓':'No'}</button>
           </td>
@@ -535,19 +530,19 @@ async function renderRidersManage(el) {
 }
 async function toggleAdmin(id, value) {
   if (value && !confirm('Grant full admin access to this rider?')) return;
-  await sb.from('profiles').update({ is_admin: value }).eq('id', id);
-  Toast.success(value ? 'Admin access granted.' : 'Admin access removed.');
+  await MH.sb.from('profiles').update({ is_admin: value }).eq('id', id);
+  MH.Toast.success(value ? 'Admin access granted.' : 'Admin access removed.');
   switchSection('riders');
 }
 async function toggleVerified(id, value) {
-  await sb.from('profiles').update({ is_verified: value }).eq('id', id);
-  Toast.success(value ? 'Rider verified.' : 'Verification removed.');
+  await MH.sb.from('profiles').update({ is_verified: value }).eq('id', id);
+  MH.Toast.success(value ? 'Rider verified.' : 'Verification removed.');
   switchSection('riders');
 }
 
-// ── CONNECTIONS (integration settings) ───────────────────────────────────
+// ── CONNECTIONS ───────────────────────────────────────────────────────
 function renderConnections(el) {
-  const hasMapbox = !!CFG.MAPBOX_TOKEN;
+  const hasMapbox = !!MH.CFG.MAPBOX_TOKEN;
   el.innerHTML = `
   <div class="admin-page-title">CONNECTIONS</div>
   <div class="admin-page-sub">External services MotoHub talks to. Most are configured by editing <code style="color:var(--orange)">config.js</code> in the project root.</div>
@@ -558,7 +553,7 @@ function renderConnections(el) {
       <div class="connection-status connected"><div class="connection-dot connected"></div>Connected</div>
     </div>
     <p style="font-size:13px;color:var(--text-2);line-height:1.7">Your live database. All accounts, trails, lap times, and posts are stored here.</p>
-    <div class="form-group mt-12"><label class="form-label">Project URL</label><input class="form-input" value="${CFG.SUPABASE_URL}" readonly></div>
+    <div class="form-group mt-12"><label class="form-label">Project URL</label><input class="form-input" value="${MH.CFG.SUPABASE_URL}" readonly></div>
   </div>
 
   <div class="admin-connection-card">
