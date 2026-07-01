@@ -1305,10 +1305,8 @@ function wizardNext1() {
   wizardStep = 2; renderWizardStep();
 }
 function wizardNext2() {
-  if (!tracer || !tracer.getStats().canSubmit) { Toast.error('Trace at least 4 points first.'); return; }
   wizardStep = 3; renderWizardStep();
 }
-
 function placeTracerPoint() {
   if (!tracer) { Toast.error('Map is still loading — try again in a moment.'); return; }
   tracer.placeAtCenter();
