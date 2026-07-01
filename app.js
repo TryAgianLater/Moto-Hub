@@ -217,6 +217,14 @@ const TrailRequestsAPI = {
     return error ? [] : data;
   },
 
+  async getAll() {
+    if (!sb) return [];
+    const { data, error } = await sb.from('trail_requests')
+      .select('*, submitter:profiles!trail_requests_submitted_by_fkey(id,display_name,username)')
+      .order('created_at', { ascending: false });
+    return error ? [] : data;
+  },
+
   async uploadPhoto(file) {
     if (!sb) return { error: 'Not connected.' };
     const profile = await Auth.getCurrentProfile();
