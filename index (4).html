@@ -1,0 +1,2173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MotoHub — Find Trails. Chase Records. Ride More.</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  /* v2 additions — kept inline so the original styles.css never needs touching */
+  .satellite-mode .leaflet-tile { filter: none !important; }
+  .tracer-crosshair {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: 34px; height: 34px; pointer-events: none; z-index: 450;
+  }
+  .tracer-crosshair::before, .tracer-crosshair::after {
+    content: ''; position: absolute; background: #FF6B00; box-shadow: 0 0 0 1px rgba(0,0,0,0.6);
+  }
+  .tracer-crosshair::before { left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); }
+  .tracer-crosshair::after  { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
+  .tracer-crosshair-dot {
+    position: absolute; top: 50%; left: 50%; width: 8px; height: 8px;
+    transform: translate(-50%,-50%); border-radius: 50%;
+    background: transparent; border: 2px solid #FF6B00; box-shadow: 0 0 0 1px rgba(0,0,0,0.6);
+  }
+  .photo-preview-thumb {
+    width: 84px; height: 84px; border-radius: 8px; object-fit: cover;
+    border: 1px solid var(--border-med); position: relative;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ NAV ═══ -->
+<nav id="nav">
+  <div class="nav-logo" onclick="go('home')">
+    <div class="nav-logo-mark">M</div>
+    <div class="nav-logo-text">MOTOHUB</div>
+  </div>
+  <div class="nav-links">
+    <button class="nav-link" data-nav-page="home" onclick="go('home')">Home</button>
+    <button class="nav-link" data-nav-page="trails" onclick="go('trails')">Trails</button>
+    <button class="nav-link" data-nav-page="map" onclick="go('map')">Map</button>
+    <button class="nav-link" data-nav-page="leaderboards" onclick="go('leaderboards')">Leaderboards</button>
+    <button class="nav-link" data-nav-page="community" onclick="go('community')">Community</button>
+    <button class="nav-link" data-nav-page="members" onclick="go('members')">Members</button>
+    <button class="nav-link" data-nav-page="garage" onclick="go('garage')">Garage</button>
+  </div>
+  <div class="nav-right" id="nav-right">
+    <!-- populated by updateNavAuthUI() -->
+  </div>
+  <button class="nav-hamburger" id="hamburger" onclick="toggleMobileMenu()"><span></span><span></span><span></span></button>
+</nav>
+<div class="mobile-menu" id="mobile-menu">
+  <button class="mobile-nav-link" onclick="go('home')">Home</button>
+  <button class="mobile-nav-link" onclick="go('trails')">Trails</button>
+  <button class="mobile-nav-link" onclick="go('map')">Map</button>
+  <button class="mobile-nav-link" onclick="go('leaderboards')">Leaderboards</button>
+  <button class="mobile-nav-link" onclick="go('community')">Community</button>
+  <button class="mobile-nav-link" onclick="go('members')">Members</button>
+  <button class="mobile-nav-link" onclick="go('garage')">Garage</button>
+  <div class="divider" style="margin:8px 0"></div>
+  <div id="mobile-auth-slot"></div>
+</div>
+
+<!-- ═══ APP ROOT ═══ -->
+<div id="app"></div>
+
+<!-- ═══ SUBMIT TIME MODAL ═══ -->
+<div class="modal-overlay hidden" id="submit-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">SUBMIT TIME</div><div class="modal-subtitle">Record your lap time for review</div></div>
+      <button class="modal-close" onclick="closeSubmitModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Trail <span class="required">*</span></label>
+        <select class="form-select" id="st-trail"><option value="">Select a trail…</option></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Lap Time <span class="required">*</span></label>
+        <div style="display:grid;grid-template-columns:1fr 14px 1fr 14px 1fr;gap:6px;align-items:center">
+          <input class="form-input t-mono text-center" type="number" min="0" placeholder="0" id="st-min">
+          <div class="t-mono text-center" style="color:var(--text-3)">:</div>
+          <input class="form-input t-mono text-center" type="number" min="0" max="59" placeholder="00" id="st-sec">
+          <div class="t-mono text-center" style="color:var(--text-3)">.</div>
+          <input class="form-input t-mono text-center" type="number" min="0" max="999" placeholder="000" id="st-ms">
+        </div>
+        <div class="form-hint">MIN : SEC . MILLISECONDS</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Bike Used</label>
+        <select class="form-select" id="st-bike"><option value="">No bike specified</option></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <textarea class="form-textarea" id="st-notes" placeholder="Conditions, line choices, anything worth noting…"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Video Link (optional)</label>
+        <input class="form-input" type="url" id="st-video" placeholder="https://youtube.com/…">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeSubmitModal()">Cancel</button>
+      <button class="btn btn-primary" id="st-submit-btn" onclick="submitLapTime()">Submit Time →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ TOAST CONTAINER ═══ -->
+<div id="toast-container"></div>
+
+<!-- ═══ SCRIPTS ═══ -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+
+<script>
+/* ============================================================
+   MOTOHUB — MAIN APP SCRIPT
+   Router + Page Renderers + Canvas Art + Modal Logic
+   ============================================================ */
+const MH = window.MotoHub;
+const app = document.getElementById('app');
+let activeMotoMap = null; // tracked so we can clean up Leaflet instances between page loads
+
+// ── ROUTER ──────────────────────────────────────────────────────────────
+function go(path) { location.hash = '#' + path; }
+
+const ROUTES = {
+  home: () => Pages.home(),
+  trails: () => Pages.trails(),
+  trail: (p) => Pages.trailDetail(p[0]),
+  map: () => Pages.mapPage(),
+  'request-trail': () => Pages.trailRequest(),
+  leaderboards: () => Pages.leaderboards(),
+  community: () => Pages.community(),
+  members: () => Pages.members(),
+  garage: () => Pages.garage(),
+  profile: (p) => Pages.profile(p[0]),
+  dashboard: () => Pages.dashboard(),
+  login: () => Pages.login(),
+  register: () => Pages.register(),
+};
+
+function router() {
+  closeMobileMenu();
+  const hash = (location.hash || '#home').slice(1);
+  const [page, ...rest] = hash.split('/');
+  document.querySelectorAll('[data-nav-page]').forEach(el => el.classList.toggle('active', el.dataset.navPage === page));
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  if (activeMotoMap) { activeMotoMap = null; }
+  const handler = ROUTES[page];
+  if (handler) handler(rest); else Pages.notFound();
+}
+window.addEventListener('hashchange', router);
+
+function loadingHTML() {
+  return `<div class="page flex-center" style="justify-content:center"><div class="spinner"></div></div>`;
+}
+
+async function requireAuth(msg = 'Please log in to continue.') {
+  const profile = await Auth.getCurrentProfile();
+  if (!profile) { Toast.error(msg); go('login'); return null; }
+  return profile;
+}
+
+/**
+ * Checks whether the rider now qualifies for any new achievements and
+ * awards them, showing a toast for each one. Safe to call after any
+ * action (or just on profile view) — it never re-awards something already
+ * earned. This is what actually grants achievements; without calling this
+ * somewhere, the achievements table/UI would just sit empty forever.
+ */
+async function awardAchievementsQuietly(riderId) {
+  try {
+    const awarded = await AchievementsAPI.checkAndAward(riderId);
+    awarded.forEach(a => Toast.show(`Achievement unlocked: ${a.name}`, a.icon || '🎖', 'success'));
+    return awarded;
+  } catch (e) {
+    console.error('[Achievements] check failed', e);
+    return [];
+  }
+}
+
+// ── NAV AUTH UI ─────────────────────────────────────────────────────────
+async function updateNavAuthUI() {
+  const slot = document.getElementById('nav-right');
+  const mobileSlot = document.getElementById('mobile-auth-slot');
+  if (!SUPABASE_READY) {
+    slot.innerHTML = `<button class="btn btn-sm btn-outline" onclick="alert('Connect Supabase in config.js first — see README.md')">Setup Required</button>`;
+    return;
+  }
+  const profile = await Auth.getCurrentProfile();
+  if (!profile) {
+    slot.innerHTML = `
+      <button class="btn btn-sm btn-ghost" onclick="go('login')">Log In</button>
+      <button class="btn btn-sm btn-primary" onclick="go('register')">Sign Up</button>`;
+    mobileSlot.innerHTML = `
+      <button class="mobile-nav-link" onclick="go('login')">Log In</button>
+      <button class="mobile-nav-link" onclick="go('register')">Sign Up</button>`;
+    return;
+  }
+  const unread = await NotificationsAPI.getUnreadCount();
+  slot.innerHTML = `
+    <button class="btn btn-sm btn-primary" onclick="openSubmitModal()">+ Submit Time</button>
+    <div class="dropdown">
+      <button class="nav-avatar-btn" onclick="toggleDropdown('user-dd')">
+        ${avatarHTML(profile, 28)}
+        <span class="nav-avatar-name hide-mobile">${Utils.escapeHtml(profile.display_name)}</span>
+        ${unread > 0 ? '<span class="notif-dot"></span>' : ''}
+      </button>
+      <div class="dropdown-menu hidden" id="user-dd">
+        <button class="dropdown-item" onclick="go('dashboard')">📊 Dashboard ${unread > 0 ? `<span class="badge badge-orange" style="margin-left:auto">${unread}</span>` : ''}</button>
+        <button class="dropdown-item" onclick="go('profile/${profile.username}')">👤 My Profile</button>
+        <button class="dropdown-item" onclick="go('garage')">🏍️ My Garage</button>
+        <button class="dropdown-item" onclick="go('request-trail')">🗺 Request Trail</button>
+        <div class="dropdown-divider"></div>
+        <button class="dropdown-item danger" onclick="doLogout()">↪ Log Out</button>
+      </div>
+    </div>`;
+  mobileSlot.innerHTML = `
+    <button class="mobile-nav-link" onclick="go('dashboard')">Dashboard</button>
+    <button class="mobile-nav-link" onclick="go('profile/${profile.username}')">My Profile</button>
+    <button class="mobile-nav-link" onclick="go('request-trail')">Request Trail</button>
+    <button class="mobile-nav-link" onclick="doLogout()">Log Out</button>`;
+}
+
+function toggleDropdown(id) {
+  const el = document.getElementById(id);
+  document.querySelectorAll('.dropdown-menu').forEach(d => { if (d.id !== id) d.classList.add('hidden'); });
+  el.classList.toggle('hidden');
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.dropdown')) document.querySelectorAll('.dropdown-menu').forEach(d => d.classList.add('hidden'));
+});
+
+async function doLogout() {
+  await Auth.logout();
+  Toast.success('Logged out.');
+  await updateNavAuthUI();
+  go('home');
+}
+
+function toggleMobileMenu() {
+  document.getElementById('mobile-menu').classList.toggle('open');
+}
+function closeMobileMenu() { document.getElementById('mobile-menu').classList.remove('open'); }
+
+window.addEventListener('scroll', () => document.getElementById('nav').classList.toggle('scrolled', window.scrollY > 8));
+
+// ── SHARED UI HELPERS ───────────────────────────────────────────────────
+function avatarHTML(rider, size = 36) {
+  const cls = size <= 28 ? 'avatar-sm' : size <= 36 ? 'avatar-md' : size <= 48 ? 'avatar-lg' : size <= 80 ? 'avatar-xl' : 'avatar-2xl';
+  const color = rider?.avatar_color || '#FF6B00';
+  if (rider?.avatar_url) {
+    return `<div class="avatar ${cls}" style="background-image:url('${rider.avatar_url}');background-size:cover;background-position:center"></div>`;
+  }
+  return `<div class="avatar ${cls}" style="background:linear-gradient(135deg,${color},${Utils.darken(color)})">${Utils.escapeHtml(rider?.avatar_initials || '??')}</div>`;
+}
+
+function diffBadge(d) {
+  if (!d) return '';
+  return `<span class="badge ${Utils.diffBadgeClass(d)}">${d.charAt(0).toUpperCase()+d.slice(1)}</span>`;
+}
+
+function starDisplay(rating) {
+  const r = Math.round(rating || 0);
+  return `<span class="stars">${'★'.repeat(r)}${'☆'.repeat(5-r)}</span>`;
+}
+
+function renderFooter() {
+  return `
+  <footer id="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div>
+          <div class="nav-logo" style="cursor:default"><div class="nav-logo-mark">M</div><div class="nav-logo-text">MOTOHUB</div></div>
+          <p class="footer-desc">The home of West Texas off-road riding. Real trails, real records, real riders.</p>
+        </div>
+        <div>
+          <div class="footer-col-title">Platform</div>
+          <button class="footer-link" onclick="go('trails')">Trail Directory</button>
+          <button class="footer-link" onclick="go('map')">Trail Map</button>
+          <button class="footer-link" onclick="go('leaderboards')">Leaderboards</button>
+          <button class="footer-link" onclick="go('request-trail')">Request a Trail</button>
+        </div>
+        <div>
+          <div class="footer-col-title">Community</div>
+          <button class="footer-link" onclick="go('community')">Rider Feed</button>
+          <button class="footer-link" onclick="go('garage')">Bike Garage</button>
+          <button class="footer-link" onclick="go('dashboard')">Dashboard</button>
+        </div>
+        <div>
+          <div class="footer-col-title">Account</div>
+          <button class="footer-link" onclick="go('login')">Log In</button>
+          <button class="footer-link" onclick="go('register')">Sign Up</button>
+          <button class="footer-link" onclick="window.open('admin.html','_blank')">Admin</button>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <div class="footer-copy">© ${new Date().getFullYear()} MotoHub — Built for West Texas Riders</div>
+        <div class="footer-copy">🤠 Seminole, TX</div>
+      </div>
+    </div>
+  </footer>`;
+}
+
+// ── CANVAS ART (decorative generative art — no data implied) ────────────
+function drawDesertScene(canvas, seed = 0) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth || 400;
+  const H = canvas.height = canvas.offsetHeight || 200;
+  const rng = (s) => { const x = Math.sin(seed + s) * 10000; return x - Math.floor(x); };
+  const sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a0807'); sky.addColorStop(.4,'#1a0e06'); sky.addColorStop(1,'#2d1a06');
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
+  for (let i=0;i<36;i++) {
+    const x = rng(i*7)*W, y = rng(i*13)*H*0.5, r = rng(i*3)*1.4+0.3;
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+    ctx.fillStyle = `rgba(255,245,220,${rng(i*5)*0.6+0.25})`; ctx.fill();
+  }
+  for (let t=0;t<7;t++) drawMesquite(ctx, rng(t*11)*W, H*(0.55+rng(t*7)*0.15), H*(0.11+rng(t*3)*0.09), rng(t*17));
+  const ground = ctx.createLinearGradient(0,H*0.65,0,H);
+  ground.addColorStop(0,'#1a1008'); ground.addColorStop(1,'#0d0803');
+  ctx.fillStyle = ground; ctx.fillRect(0,H*0.65,W,H);
+  ctx.strokeStyle='rgba(255,107,0,0.14)'; ctx.lineWidth=2; ctx.setLineDash([6,12]);
+  ctx.beginPath(); ctx.moveTo(W*0.1,H); ctx.bezierCurveTo(W*0.25,H*0.7,W*0.5,H*0.85,W*0.9,H*0.72); ctx.stroke();
+  ctx.setLineDash([]);
+  const glow = ctx.createRadialGradient(W*0.5,H*0.65,0,W*0.5,H*0.65,W*0.6);
+  glow.addColorStop(0,'rgba(255,107,0,0.07)'); glow.addColorStop(1,'transparent');
+  ctx.fillStyle = glow; ctx.fillRect(0,0,W,H);
+}
+function drawMesquite(ctx,x,y,h,rng) {
+  ctx.strokeStyle='rgba(15,12,5,0.9)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+(rng-0.5)*h*0.3,y-h*0.5); ctx.stroke();
+  for (let b=0;b<5;b++) {
+    const bx = x+Math.sin(b*1.2+rng*5)*h*0.6, by = y-h*(0.3+b*0.1);
+    ctx.beginPath(); ctx.moveTo(x,y-h*0.3); ctx.quadraticCurveTo(x+(rng-0.5)*h*0.4,y-h*0.6,bx,by-h*0.2);
+    ctx.lineWidth=1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(bx,by-h*0.2,h*0.12,0,Math.PI*2); ctx.fillStyle='rgba(10,14,6,0.9)'; ctx.fill();
+  }
+}
+
+function drawBikeArt(canvas, opts = {}) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth || 380;
+  const H = canvas.height = canvas.offsetHeight || 180;
+  const color = opts.colorPrimary || '#FF6B00';
+  const color2 = opts.colorSecondary || '#000000';
+  const bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#141008'); bg.addColorStop(1,'#0a0805');
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.03)'; ctx.lineWidth=1;
+  for (let x=0;x<W;x+=28) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y=0;y<H;y+=28) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  const cx = W*0.5, cy = H*0.58, scale = Math.min(W,H)*0.0026;
+  const glow = ctx.createRadialGradient(cx,cy,0,cx,cy,W*0.4);
+  glow.addColorStop(0,`${color}20`); glow.addColorStop(1,'transparent');
+  ctx.fillStyle = glow; ctx.fillRect(0,0,W,H);
+  const wr = 36*scale, fw={x:cx+56*scale,y:cy}, rw={x:cx-56*scale,y:cy};
+  [fw,rw].forEach(w=>{
+    ctx.beginPath(); ctx.arc(w.x,w.y,wr,0,Math.PI*2); ctx.lineWidth=3*scale; ctx.strokeStyle=opts.wheelColor||'#888'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(w.x,w.y,wr*0.22,0,Math.PI*2); ctx.strokeStyle=`${color}90`; ctx.stroke();
+    for (let s=0;s<8;s++) {
+      const a = s*Math.PI/4;
+      ctx.beginPath(); ctx.moveTo(w.x+Math.cos(a)*wr*0.22,w.y+Math.sin(a)*wr*0.22); ctx.lineTo(w.x+Math.cos(a)*wr*0.92,w.y+Math.sin(a)*wr*0.92);
+      ctx.strokeStyle=`${color}40`; ctx.lineWidth=1; ctx.stroke();
+    }
+  });
+  ctx.lineWidth=4*scale; ctx.strokeStyle=color;
+  ctx.beginPath(); ctx.moveTo(rw.x+wr*0.3,cy-10*scale); ctx.lineTo(cx-10*scale,cy-42*scale); ctx.lineTo(cx+22*scale,cy-42*scale); ctx.lineTo(fw.x-wr*0.3,cy-10*scale); ctx.stroke();
+  ctx.lineWidth=7*scale; ctx.strokeStyle=color2;
+  ctx.beginPath(); ctx.moveTo(cx-36*scale,cy-40*scale); ctx.lineTo(cx+12*scale,cy-44*scale); ctx.stroke();
+  ctx.lineWidth=3*scale; ctx.strokeStyle=`${color}aa`;
+  ctx.beginPath(); ctx.moveTo(cx+22*scale,cy-40*scale); ctx.lineTo(fw.x-wr*0.2,cy-8*scale); ctx.stroke();
+  ctx.lineWidth=3*scale; ctx.strokeStyle='#999';
+  ctx.beginPath(); ctx.moveTo(cx+16*scale,cy-52*scale); ctx.lineTo(cx+32*scale,cy-58*scale); ctx.stroke();
+  ctx.fillStyle=`${color}30`; ctx.fillRect(cx-22*scale,cy-32*scale,38*scale,24*scale);
+  ctx.strokeStyle=`${color}60`; ctx.lineWidth=1; ctx.strokeRect(cx-22*scale,cy-32*scale,38*scale,24*scale);
+  // Number plate
+  if (opts.numberPlate) {
+    ctx.fillStyle = opts.numberPlateColor || '#fff';
+    ctx.fillRect(cx-14*scale, cy-18*scale, 28*scale, 16*scale);
+    ctx.fillStyle = '#000'; ctx.font = `${12*scale}px sans-serif`; ctx.textAlign='center';
+    ctx.fillText(opts.numberPlate, cx, cy-7*scale);
+  }
+  const shadow = ctx.createLinearGradient(cx-74*scale,cy+wr,cx+74*scale,cy+wr+10*scale);
+  shadow.addColorStop(0,'transparent'); shadow.addColorStop(0.5,`${color}25`); shadow.addColorStop(1,'transparent');
+  ctx.fillStyle = shadow; ctx.fillRect(cx-84*scale,cy+wr-2*scale,168*scale,12*scale);
+}
+
+function drawATVArt(canvas, opts = {}) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth || 380;
+  const H = canvas.height = canvas.offsetHeight || 180;
+  const color = opts.colorPrimary || '#FF6B00';
+  const color2 = opts.colorSecondary || '#000000';
+  const bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#141008'); bg.addColorStop(1,'#0a0805');
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.03)'; ctx.lineWidth=1;
+  for (let x=0;x<W;x+=28) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y=0;y<H;y+=28) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  const cx = W*0.5, cy = H*0.6, scale = Math.min(W,H)*0.0026;
+  const glow = ctx.createRadialGradient(cx,cy,0,cx,cy,W*0.4);
+  glow.addColorStop(0,`${color}20`); glow.addColorStop(1,'transparent');
+  ctx.fillStyle = glow; ctx.fillRect(0,0,W,H);
+
+  // Chunky ATV wheels — bigger and flatter-profile than the dirt bike's
+  const wr = 42*scale, fw={x:cx+58*scale,y:cy}, rw={x:cx-58*scale,y:cy};
+  [fw,rw].forEach(w=>{
+    ctx.beginPath(); ctx.arc(w.x,w.y,wr,0,Math.PI*2); ctx.lineWidth=6*scale; ctx.strokeStyle=opts.wheelColor||'#666'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(w.x,w.y,wr*0.4,0,Math.PI*2); ctx.fillStyle='#222'; ctx.fill();
+    ctx.beginPath(); ctx.arc(w.x,w.y,wr*0.4,0,Math.PI*2); ctx.strokeStyle=`${color}90`; ctx.stroke();
+  });
+
+  // Flat plastic utility deck — the signature ATV silhouette
+  ctx.fillStyle = `${color}35`;
+  ctx.beginPath();
+  ctx.moveTo(rw.x-10*scale, cy-12*scale);
+  ctx.lineTo(fw.x+6*scale, cy-12*scale);
+  ctx.lineTo(fw.x-4*scale, cy-30*scale);
+  ctx.lineTo(rw.x+10*scale, cy-34*scale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 3*scale; ctx.stroke();
+
+  // Seat
+  ctx.fillStyle = color2;
+  ctx.fillRect(cx-26*scale, cy-40*scale, 34*scale, 9*scale);
+
+  // Handlebars
+  ctx.lineWidth = 4*scale; ctx.strokeStyle = '#999';
+  ctx.beginPath(); ctx.moveTo(fw.x-8*scale, cy-30*scale); ctx.lineTo(fw.x+10*scale, cy-46*scale); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(fw.x+2*scale, cy-44*scale); ctx.lineTo(fw.x+18*scale, cy-44*scale); ctx.stroke();
+
+  // Rear cargo rack
+  ctx.strokeStyle = `${color}aa`; ctx.lineWidth = 3*scale;
+  ctx.strokeRect(rw.x-16*scale, cy-34*scale, 28*scale, 6*scale);
+
+  if (opts.numberPlate) {
+    ctx.fillStyle = opts.numberPlateColor || '#fff';
+    ctx.fillRect(cx-14*scale, cy-26*scale, 28*scale, 14*scale);
+    ctx.fillStyle = '#000'; ctx.font = `${11*scale}px sans-serif`; ctx.textAlign='center';
+    ctx.fillText(opts.numberPlate, cx, cy-16*scale);
+  }
+
+  const shadow2 = ctx.createLinearGradient(cx-94*scale,cy+wr,cx+94*scale,cy+wr+10*scale);
+  shadow2.addColorStop(0,'transparent'); shadow2.addColorStop(0.5,`${color}25`); shadow2.addColorStop(1,'transparent');
+  ctx.fillStyle = shadow2; ctx.fillRect(cx-104*scale,cy+wr-2*scale,208*scale,12*scale);
+}
+
+function drawSxSArt(canvas, opts = {}) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth || 380;
+  const H = canvas.height = canvas.offsetHeight || 180;
+  const color = opts.colorPrimary || '#FF6B00';
+  const color2 = opts.colorSecondary || '#000000';
+  const bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#141008'); bg.addColorStop(1,'#0a0805');
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.03)'; ctx.lineWidth=1;
+  for (let x=0;x<W;x+=28) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y=0;y<H;y+=28) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  const cx = W*0.5, cy = H*0.62, scale = Math.min(W,H)*0.0026;
+  const glow = ctx.createRadialGradient(cx,cy,0,cx,cy,W*0.45);
+  glow.addColorStop(0,`${color}20`); glow.addColorStop(1,'transparent');
+  ctx.fillStyle = glow; ctx.fillRect(0,0,W,H);
+
+  // Wide stance + flared fenders — the side-by-side's signature wheelbase
+  const wr = 34*scale, fw={x:cx+74*scale,y:cy}, rw={x:cx-74*scale,y:cy};
+  [fw,rw].forEach(w=>{
+    ctx.beginPath(); ctx.arc(w.x,w.y-2*scale,wr*1.35,Math.PI,0); ctx.fillStyle=color2; ctx.fill();
+    ctx.beginPath(); ctx.arc(w.x,w.y,wr,0,Math.PI*2); ctx.lineWidth=5*scale; ctx.strokeStyle=opts.wheelColor||'#666'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(w.x,w.y,wr*0.4,0,Math.PI*2); ctx.fillStyle='#222'; ctx.fill();
+  });
+
+  // Floor pan
+  ctx.fillStyle = `${color}30`;
+  ctx.fillRect(rw.x-6*scale, cy-22*scale, (fw.x-rw.x)+12*scale, 16*scale);
+  ctx.strokeStyle = color; ctx.lineWidth = 3*scale;
+  ctx.strokeRect(rw.x-6*scale, cy-22*scale, (fw.x-rw.x)+12*scale, 16*scale);
+
+  // Roll cage — the unmistakable SxS tube frame
+  ctx.strokeStyle = color2; ctx.lineWidth = 5*scale; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(rw.x+8*scale, cy-22*scale);
+  ctx.lineTo(rw.x+14*scale, cy-66*scale);
+  ctx.lineTo(fw.x-30*scale, cy-72*scale);
+  ctx.lineTo(fw.x-10*scale, cy-50*scale);
+  ctx.lineTo(fw.x-10*scale, cy-22*scale);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(fw.x-30*scale, cy-72*scale);
+  ctx.lineTo(fw.x-30*scale, cy-30*scale);
+  ctx.stroke();
+
+  // Two side-by-side seats
+  ctx.fillStyle = `${color}55`;
+  ctx.fillRect(rw.x+20*scale, cy-40*scale, 22*scale, 18*scale);
+  ctx.fillRect(rw.x+46*scale, cy-40*scale, 22*scale, 18*scale);
+
+  if (opts.numberPlate) {
+    ctx.fillStyle = opts.numberPlateColor || '#fff';
+    ctx.fillRect(cx-16*scale, cy-14*scale, 32*scale, 14*scale);
+    ctx.fillStyle = '#000'; ctx.font = `${11*scale}px sans-serif`; ctx.textAlign='center';
+    ctx.fillText(opts.numberPlate, cx, cy-4*scale);
+  }
+
+  const shadow3 = ctx.createLinearGradient(cx-100*scale,cy+wr,cx+100*scale,cy+wr+10*scale);
+  shadow3.addColorStop(0,'transparent'); shadow3.addColorStop(0.5,`${color}25`); shadow3.addColorStop(1,'transparent');
+  ctx.fillStyle = shadow3; ctx.fillRect(cx-110*scale,cy+wr-2*scale,220*scale,12*scale);
+}
+
+/**
+ * Dispatches to the right canvas illustration based on vehicle_type.
+ * Unicode has no dedicated ATV/UTV emoji, so 🛺 and 🚙 are used as the
+ * closest visual stand-ins — swap these two literals here if you'd
+ * rather use something else.
+ */
+function vehicleEmoji(type) {
+  return { dirt_bike: '🏍️', atv: '🛺', side_by_side: '🚙' }[type] || '🏍️';
+}
+
+function drawVehicleArt(canvas, opts = {}) {
+  const type = opts.vehicleType || 'dirt_bike';
+  if (type === 'atv') return drawATVArt(canvas, opts);
+  if (type === 'side_by_side') return drawSxSArt(canvas, opts);
+  return drawBikeArt(canvas, opts);
+}
+
+function drawLineChart(canvas, points) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth || 600;
+  const H = canvas.height = canvas.offsetHeight || 180;
+  ctx.clearRect(0,0,W,H);
+  if (points.length < 2) return;
+  const pad = 30;
+  const times = points.map(p => p.time_ms);
+  const min = Math.min(...times), max = Math.max(...times);
+  const range = max - min || 1;
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
+  for (let i=0;i<=3;i++) {
+    const y = pad + (H-pad*2) * (i/3);
+    ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke();
+  }
+  ctx.beginPath();
+  points.forEach((p,i) => {
+    const x = pad + (W-pad*2) * (i/(points.length-1));
+    const y = pad + (H-pad*2) * ((p.time_ms-min)/range);
+    if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle = '#FF6B00'; ctx.lineWidth = 2.5; ctx.stroke();
+  points.forEach((p,i) => {
+    const x = pad + (W-pad*2) * (i/(points.length-1));
+    const y = pad + (H-pad*2) * ((p.time_ms-min)/range);
+    ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fillStyle = '#FF6B00'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x,y,7,0,Math.PI*2); ctx.strokeStyle='rgba(255,107,0,0.3)'; ctx.lineWidth=1.5; ctx.stroke();
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// PAGES
+// ════════════════════════════════════════════════════════════
+const Pages = {};
+
+// ── HOME ──────────────────────────────────────────────────────────────
+Pages.home = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+
+  const [stats, trails, recentLaps] = await Promise.all([
+    StatsAPI.getPlatformStats(),
+    TrailsAPI.getAll(),
+    LapTimesAPI.getGlobalLeaderboard(6),
+  ]);
+  const featured = trails.slice(0, 6);
+
+  app.innerHTML = `
+  <section class="hero page">
+    <div class="hero-canvas-wrap"><canvas id="hero-canvas"></canvas></div>
+    <div class="hero-diagonal"></div>
+    <div class="hero-content"><div class="hero-inner">
+      <div class="hero-tag"><div class="hero-tag-dot"></div>West Texas Trail Network</div>
+      <h1 class="hero-headline">FIND TRAILS.<br>CHASE <span class="line-orange">RECORDS.</span><br>RIDE MORE.</h1>
+      <p class="hero-sub">The home of off-road riding. Discover trails, track lap times, and connect with riders across West Texas and Eastern New Mexico.</p>
+      <div class="hero-actions">
+        <button class="btn btn-primary btn-lg" onclick="go('trails')">Explore Trails</button>
+        <button class="btn btn-outline btn-lg" onclick="go('leaderboards')">View Leaderboards</button>
+        <button class="btn btn-ghost btn-lg" onclick="go('request-trail')">🗺 Request a Trail</button>
+      </div>
+      <div class="hero-stats-strip">
+        ${statItem(stats.trails, 'Mapped Trails')}
+        ${statItem(stats.riders, 'Registered Riders')}
+        ${statItem(stats.laps, 'Recorded Laps')}
+        ${statItem(stats.bikes, 'Bikes Registered')}
+      </div>
+    </div></div>
+  </section>
+
+  <section class="trails-section container" style="padding:90px 32px">
+    <div class="section-header">
+      <div><div class="section-eyebrow">📍 West Texas</div><h2 class="section-title">FEATURED TRAILS</h2></div>
+      ${trails.length ? `<button class="btn btn-outline hide-mobile" onclick="go('trails')">View All →</button>` : ''}
+    </div>
+    ${featured.length ? `<div class="trails-grid">${featured.map((t,i)=>trailCardHTML(t,i)).join('')}</div>` : emptyState('🗺','No trails mapped yet','Be the first to put a West Texas trail on the map.','Request the First Trail',`go('request-trail')`)}
+  </section>
+
+  <section style="padding:70px 0;background:var(--surface-1);border-top:1px solid var(--border)">
+    <div class="container">
+      <div class="section-header" style="margin-bottom:24px">
+        <div><div class="section-eyebrow">🏁 Live Rankings</div><h2 class="section-title">LATEST RECORDS</h2></div>
+        ${recentLaps.length ? `<button class="btn btn-outline hide-mobile" onclick="go('leaderboards')">Full Leaderboard →</button>` : ''}
+      </div>
+      ${recentLaps.length ? `<div class="card">${recentLaps.map((r,i)=>globalLBRowHTML(r,i)).join('')}</div>`
+        : emptyState('🏆','No recorded laps yet','Once riders start submitting times, the leaderboard comes alive here.','Browse Trails',`go('trails')`)}
+    </div>
+  </section>
+
+  <section style="padding:80px 0;background:var(--surface-2);border-top:1px solid var(--border);text-align:center">
+    <div class="container">
+      <div class="section-eyebrow" style="text-align:center">🏍️ Your Bike. Your Records.</div>
+      <h2 class="section-title" style="font-size:clamp(34px,6vw,68px)">READY TO RIDE?</h2>
+      <p style="color:var(--text-2);max-width:480px;margin:14px auto 36px">Create an account, add your bike to the garage, and submit your first lap time.</p>
+      <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap">
+        <button class="btn btn-primary btn-lg" onclick="go('register')">Create Free Account</button>
+        <button class="btn btn-outline btn-lg" onclick="go('garage')">Build Your Garage</button>
+      </div>
+    </div>
+  </section>
+  ${renderFooter()}`;
+
+  requestAnimationFrame(initHeroCanvas);
+  document.querySelectorAll('[data-count]').forEach(el => animateCount(el, parseInt(el.dataset.count)));
+  document.querySelectorAll('[data-trail-thumb]').forEach(c => drawDesertScene(c, parseInt(c.dataset.trailThumb)));
+};
+
+function statItem(n, label) {
+  return `<div><div class="hero-stat-num"><span class="stat-count" data-count="${n}">0</span></div><div class="hero-stat-label">${label}</div></div>`;
+}
+function animateCount(el, target) {
+  if (target === 0) { el.textContent = '0'; return; }
+  let start = null;
+  const step = (ts) => {
+    if (!start) start = ts;
+    const p = Math.min((ts-start)/1200, 1);
+    el.textContent = Math.round((1-Math.pow(1-p,3)) * target).toLocaleString();
+    if (p<1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function initHeroCanvas() {
+  const canvas = document.getElementById('hero-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  function resize() { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; }
+  resize(); window.addEventListener('resize', resize);
+  let t = 0;
+  const trailsAnim = [
+    { pts:[{x:.05,y:.7},{x:.3,y:.6},{x:.6,y:.65},{x:.9,y:.58}], color:'rgba(255,107,0,0.35)', w:2.2, speed:.3 },
+    { pts:[{x:.1,y:.85},{x:.4,y:.76},{x:.7,y:.8},{x:.95,y:.74}], color:'rgba(255,107,0,0.18)', w:1.4, speed:.5 },
+  ];
+  function draw() {
+    if (!canvas.isConnected) return;
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0,0,W,H);
+    for (let i=0;i<100;i++) {
+      const x=(Math.sin(i*7.3)*0.5+0.5)*W, y=(Math.cos(i*3.7)*0.5+0.5)*H*0.6;
+      const a=(Math.sin(t*0.02+i*0.5)+1)*0.3+0.1, r=Math.sin(i*2.1)*0.8+1.2;
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fillStyle=`rgba(255,245,210,${a})`; ctx.fill();
+    }
+    const horizon = ctx.createLinearGradient(0,H*0.45,0,H*0.75);
+    horizon.addColorStop(0,'transparent'); horizon.addColorStop(0.5,'rgba(255,107,0,0.06)'); horizon.addColorStop(1,'rgba(180,100,20,0.03)');
+    ctx.fillStyle = horizon; ctx.fillRect(0,H*0.45,W,H*0.3);
+    for (let i=0;i<13;i++) drawMesquite(ctx,(i/13)*W+Math.sin(i*2.7)*W*0.04,H*(0.58+Math.sin(i*1.3)*0.06),H*(0.06+Math.sin(i*0.7+1)*0.035),Math.sin(i*0.9));
+    const ground = ctx.createLinearGradient(0,H*0.62,0,H);
+    ground.addColorStop(0,'rgba(18,12,4,0.95)'); ground.addColorStop(1,'rgba(10,6,2,1)');
+    ctx.fillStyle = ground; ctx.fillRect(0,H*0.62,W,H);
+    trailsAnim.forEach(tr => {
+      ctx.beginPath();
+      tr.pts.forEach((p,i)=>{ const x=p.x*W, y=p.y*H+Math.sin(t*0.01*tr.speed+i*0.5)*3; if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+      ctx.strokeStyle=tr.color; ctx.lineWidth=tr.w; ctx.setLineDash([8,16]); ctx.lineDashOffset=-t*tr.speed*0.1; ctx.stroke(); ctx.setLineDash([]);
+    });
+    t++; requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+function emptyState(icon, title, sub, btnLabel, btnAction) {
+  return `<div class="empty-state">
+    <div class="empty-state-icon">${icon}</div>
+    <div class="empty-state-title">${title}</div>
+    <div class="empty-state-sub">${sub}</div>
+    ${btnLabel ? `<button class="btn btn-primary mt-16" onclick="${btnAction}">${btnLabel}</button>` : ''}
+  </div>`;
+}
+
+function trailCardHTML(t, i) {
+  return `
+  <div class="trail-card" onclick="go('trail/${t.slug}')">
+    <div class="trail-card-img">
+      <canvas data-trail-thumb="${(t.id||'').toString().split('').reduce((a,c)=>a+c.charCodeAt(0),i*13)}"></canvas>
+      <div class="trail-card-overlay"></div>
+      <div class="trail-card-badge">${diffBadge(t.difficulty)}</div>
+    </div>
+    <div class="trail-card-body">
+      <div class="trail-card-name">${Utils.escapeHtml(t.name).toUpperCase()}</div>
+      <div class="trail-card-meta">
+        <span>📍 ${Utils.escapeHtml(t.location_name||'')}</span>
+        ${t.elevation_gain_ft ? `<span>⛰ +${t.elevation_gain_ft}ft</span>` : ''}
+      </div>
+      <span class="badge badge-orange">🏜 ${Utils.escapeHtml(t.terrain_type||'mixed')}</span>
+      <div class="trail-card-footer">
+        <div><div class="t-label">Distance</div><div class="t-mono" style="color:var(--orange);font-weight:600">${t.distance_miles||0} mi</div></div>
+        <div class="text-right"><div class="t-label">Conditions</div><div style="font-size:12px;color:var(--text-2)">${Utils.escapeHtml(t.conditions||'Unknown')}</div></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function globalLBRowHTML(r, i) {
+  const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':`#${i+1}`;
+  return `
+  <div class="lb-row" style="grid-template-columns:40px 1fr 120px 100px" onclick="go('profile/${r.profile?.username||''}')">
+    <div class="lb-rank ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${medal}</div>
+    <div class="flex-center gap-12">${avatarHTML(r.profile,34)}<div><div style="font-weight:600;font-size:14px">${Utils.escapeHtml(r.profile?.display_name||'Rider')}</div><div style="font-size:11px;color:var(--text-3)">${Utils.escapeHtml(r.profile?.location||'')}</div></div></div>
+    <div class="hide-mobile" style="font-size:12px;color:var(--text-2)">${r.trailsRidden} trail${r.trailsRidden!==1?'s':''}</div>
+    <div class="lb-time text-right">${r.laps} lap${r.laps!==1?'s':''}</div>
+  </div>`;
+}
+
+// ── TRAILS DIRECTORY ─────────────────────────────────────────────────────
+let _allTrailsCache = [];
+Pages.trails = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const trails = await TrailsAPI.getAll();
+  _allTrailsCache = trails;
+
+  app.innerHTML = `
+  <div class="page" style="padding-bottom:80px">
+    <div style="background:var(--surface-1);border-bottom:1px solid var(--border);padding:56px 0 40px;margin-bottom:48px">
+      <div class="container">
+        <div class="section-eyebrow">📍 West Texas & Eastern NM</div>
+        <h1 class="section-title" style="font-size:clamp(38px,7vw,76px)">TRAIL DIRECTORY</h1>
+        <p style="color:var(--text-2);margin-top:10px;max-width:560px">Every trail here was traced and submitted by a real rider, then verified by an admin.</p>
+        <div class="flex gap-8 mt-32" style="flex-wrap:wrap" id="trail-filters">
+          ${['all','beginner','intermediate','advanced','expert'].map(d => `<button class="btn btn-sm ${d==='all'?'btn-primary':'btn-ghost'}" data-filter="${d}" onclick="filterTrails('${d}')">${d==='all'?'All Trails':d.charAt(0).toUpperCase()+d.slice(1)}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="container">
+      <div id="trails-grid-wrap">
+        ${trails.length ? `<div class="trails-grid">${trails.map((t,i)=>trailCardHTML(t,i)).join('')}</div>` : emptyState('🗺','No trails yet','This is normal for a brand-new MotoHub — be the rider who maps the first one.','Request a Trail',`go('request-trail')`)}
+      </div>
+      <div class="card text-center p-32 mt-48">
+        <div style="font-size:22px;margin-bottom:8px">📍</div>
+        <div class="t-display" style="font-size:26px;color:var(--white)">KNOW A TRAIL THAT BELONGS HERE?</div>
+        <p style="color:var(--text-3);font-size:13px;max-width:420px;margin:8px auto 18px">Trace it on the map and submit it for review — it'll show up here once approved.</p>
+        <button class="btn btn-outline" onclick="go('request-trail')">Request a Trail</button>
+      </div>
+    </div>
+    ${renderFooter()}
+  </div>`;
+  document.querySelectorAll('[data-trail-thumb]').forEach(c => drawDesertScene(c, parseInt(c.dataset.trailThumb)));
+};
+
+function filterTrails(diff) {
+  document.querySelectorAll('#trail-filters .btn').forEach(b => b.classList.remove('btn-primary'));
+  document.querySelectorAll('#trail-filters .btn').forEach(b => b.classList.add('btn-ghost'));
+  const activeBtn = document.querySelector(`#trail-filters [data-filter="${diff}"]`);
+  activeBtn.classList.remove('btn-ghost'); activeBtn.classList.add('btn-primary');
+  const filtered = diff === 'all' ? _allTrailsCache : _allTrailsCache.filter(t => t.difficulty === diff);
+  const wrap = document.getElementById('trails-grid-wrap');
+  wrap.innerHTML = filtered.length ? `<div class="trails-grid">${filtered.map((t,i)=>trailCardHTML(t,i)).join('')}</div>` : emptyState('🔍','No trails match that filter','Try a different difficulty.', null, '');
+  document.querySelectorAll('[data-trail-thumb]').forEach(c => drawDesertScene(c, parseInt(c.dataset.trailThumb)));
+}
+
+// ── TRAIL DETAIL ─────────────────────────────────────────────────────────
+Pages.trailDetail = async function(slug) {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const trail = await TrailsAPI.getBySlug(slug);
+  if (!trail) { Pages.notFound(); return; }
+
+  const [sectors, leaderboard, record, history, reviews, ratingSummary, reports, currentProfile] = await Promise.all([
+    TrailsAPI.getSectors(trail.id),
+    LapTimesAPI.getLeaderboard(trail.id),
+    TrailsAPI.getRecord(trail.id),
+    LapTimesAPI.getRecordHistory(trail.id),
+    TrailsAPI.getReviews(trail.id),
+    TrailsAPI.getRatingSummary(trail.id),
+    TrailsAPI.getConditionReports(trail.id),
+    Auth.getCurrentProfile(),
+  ]);
+  const coords = typeof trail.coords === 'string' ? JSON.parse(trail.coords) : trail.coords;
+
+  app.innerHTML = `
+  <div class="page" style="padding-bottom:80px">
+    <div class="trail-hero">
+      <canvas id="trail-hero-canvas"></canvas>
+      <div class="trail-hero-overlay"></div>
+      <div class="trail-hero-content">
+        <button class="btn btn-sm btn-ghost mb-12" onclick="go('trails')">← All Trails</button>
+        <div class="trail-hero-name">${Utils.escapeHtml(trail.name).toUpperCase()}</div>
+        <div class="trail-hero-meta">
+          ${diffBadge(trail.difficulty)}
+          <span class="badge badge-orange">🏜 ${Utils.escapeHtml(trail.terrain_type||'')}</span>
+          <span style="font-size:13px;color:var(--text-2)">📍 ${Utils.escapeHtml(trail.location_name||'')}</span>
+          ${ratingSummary.rating_count > 0 ? `${starDisplay(ratingSummary.rating_avg)} <span style="font-size:12px;color:var(--text-3)">${ratingSummary.rating_avg} (${ratingSummary.rating_count})</span>` : `<span style="font-size:12px;color:var(--text-3)">No ratings yet</span>`}
+        </div>
+      </div>
+    </div>
+
+    <div class="container" style="margin-top:40px">
+      <div class="sidebar-layout">
+        <div>
+          <div class="accent-bar"></div>
+          <h2 class="t-display" style="font-size:30px;color:var(--white);margin-bottom:14px">OVERVIEW</h2>
+          <p style="color:var(--text-2);line-height:1.8">${Utils.escapeHtml(trail.description || 'No description provided yet.')}</p>
+
+          <div class="trail-stat-grid">
+            <div class="trail-stat-cell"><div class="trail-stat-val">${trail.distance_miles||0} mi</div><div class="trail-stat-key">Distance</div></div>
+            <div class="trail-stat-cell"><div class="trail-stat-val">${trail.elevation_gain_ft ? '+'+trail.elevation_gain_ft+'ft' : '—'}</div><div class="trail-stat-key">Elevation</div></div>
+            <div class="trail-stat-cell"><div class="trail-stat-val">${Utils.escapeHtml(trail.conditions||'Unknown')}</div><div class="trail-stat-key">Conditions</div></div>
+            <div class="trail-stat-cell"><div class="trail-stat-val">${ratingSummary.rating_count}</div><div class="trail-stat-key">Reviews</div></div>
+          </div>
+
+          <h3 class="t-display mt-32" style="font-size:24px;color:var(--white)">ROUTE MAP</h3>
+          <div style="height:340px;border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border);margin-top:14px;position:relative">
+            <div id="trail-detail-map" style="width:100%;height:100%"></div>
+            <div class="replay-bar" id="replay-bar">
+              <div class="replay-info">
+                <div class="replay-rider" id="replay-rider-name"></div>
+                <div><div class="t-label">Bike</div><div id="replay-bike" style="font-size:12px;color:var(--text-2)"></div></div>
+                <div class="replay-elapsed" id="replay-elapsed">0:00.000</div>
+              </div>
+              <div class="replay-progress"><div class="replay-progress-fill" id="replay-progress-fill"></div></div>
+              <div style="font-size:10px;color:var(--text-3)">Estimated-pace replay based on recorded total time — not raw GPS telemetry.</div>
+            </div>
+          </div>
+
+          ${sectors.length ? `
+          <h3 class="t-display mt-32" style="font-size:24px;color:var(--white)">TRAIL SECTORS</h3>
+          <div class="sector-strip">${sectors.map((s,i)=>`<div class="sector-chip" onclick="showSector(${i})">${Utils.escapeHtml(s.name)}</div>`).join('')}</div>
+          <div class="sector-detail" id="sector-detail"></div>
+          ` : ''}
+
+          <h3 class="t-display mt-32" style="font-size:24px;color:var(--white)">LEADERBOARD</h3>
+          <div class="card mt-16">
+            ${leaderboard.length ? `
+            <div style="padding:10px 16px;background:var(--surface-3);border-bottom:1px solid var(--border)" class="trail-lb-row">
+              <div class="t-label">#</div><div class="t-label">Rider</div><div class="t-label hide-mobile">Bike</div><div class="t-label text-right">Time</div>
+            </div>
+            ${leaderboard.map((r,i) => `
+            <div class="trail-lb-row" onclick="go('profile/${r.profiles?.username||''}')">
+              <div class="lb-rank ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':'#'+(i+1)}</div>
+              <div class="flex-center gap-12">${avatarHTML(r.profiles,32)}<div><div style="font-weight:600;font-size:13px">${Utils.escapeHtml(r.profiles?.display_name||'Rider')}</div><div style="font-size:11px;color:var(--text-3)">${Utils.escapeHtml(r.profiles?.location||'')}</div></div></div>
+              <div class="trail-lb-bike hide-mobile">${r.bikes ? `${r.bikes.year} ${Utils.escapeHtml(r.bikes.make)} ${Utils.escapeHtml(r.bikes.model)}` : '—'}</div>
+              <div class="trail-lb-time">${r.time_display}</div>
+            </div>`).join('')}
+            ` : emptyState('🏁','No lap times yet','Be the first rider to set a time on this trail.','Submit a Time',`openSubmitModal('${trail.id}')`)}
+          </div>
+
+          ${history.length >= 2 ? `
+          <h3 class="t-display mt-32" style="font-size:24px;color:var(--white)">RECORD PROGRESSION</h3>
+          <div class="record-history mt-16"><canvas id="record-chart" style="width:100%;height:180px"></canvas></div>
+          ` : ''}
+
+          <h3 class="t-display mt-32" style="font-size:24px;color:var(--white)">REVIEWS</h3>
+          <div class="mt-16" id="reviews-wrap">
+            ${reviews.length ? reviews.map(r => `
+              <div class="review-card">
+                <div class="review-header">${avatarHTML(r.profiles,34)}<div><div class="review-name">${Utils.escapeHtml(r.profiles?.display_name||'Rider')}</div><div style="font-size:11px;color:var(--orange)">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</div></div><div class="review-date">${Utils.formatDate(r.created_at)}</div></div>
+                <div class="review-body">${Utils.escapeHtml(r.body||'')}</div>
+              </div>`).join('') : `<p style="color:var(--text-3);font-size:13px">No reviews yet — ride it and leave the first one.</p>`}
+          </div>
+          <button class="btn btn-outline mt-12" onclick="openReviewForm('${trail.id}')" id="review-cta">✍ Write a Review</button>
+          <div class="card p-20 mt-16 hidden" id="review-form-wrap">
+            <div class="form-group mb-12"><label class="form-label">Your Rating</label><div id="star-picker" style="font-size:24px;cursor:pointer">${[1,2,3,4,5].map(n=>`<span onclick="setStarRating(${n})" data-star="${n}" style="color:var(--text-4)">★</span>`).join('')}</div></div>
+            <div class="form-group mb-12"><textarea class="form-textarea" id="review-body" placeholder="How was the trail? Conditions, line choices, anything riders should know…"></textarea></div>
+            <button class="btn btn-primary" onclick="submitReview('${trail.id}')">Post Review</button>
+          </div>
+
+          <h3 class="t-display mt-32" style="font-size:24px;color:var(--white)">CONDITION REPORTS</h3>
+          <div class="card p-20 mt-16">
+            ${reports.length ? reports.map(r => `
+              <div class="trail-report-item">
+                ${avatarHTML(r.profiles,30)}
+                <div style="flex:1"><span class="report-badge" style="background:var(--surface-3);color:var(--text-2)">${r.category}</span> <span style="font-size:13px;color:var(--text-2)">${Utils.escapeHtml(r.note||'')}</span><div style="font-size:11px;color:var(--text-3);margin-top:2px">${Utils.escapeHtml(r.profiles?.display_name||'Rider')} · ${Utils.timeAgo(r.created_at)}</div></div>
+              </div>`).join('') : `<p style="color:var(--text-3);font-size:13px">No condition reports yet.</p>`}
+            <div class="flex gap-8 mt-16" style="flex-wrap:wrap">
+              <select class="form-select" id="report-category" style="max-width:160px"><option value="clear">Clear</option><option value="dust">Dust</option><option value="mud">Mud</option><option value="sand">Loose Sand</option><option value="ruts">Ruts</option><option value="visibility">Visibility</option><option value="closed">Closed</option></select>
+              <input class="form-input" id="report-note" placeholder="Quick note (optional)" style="flex:1">
+              <button class="btn btn-sm btn-outline" onclick="submitConditionReport('${trail.id}')">Report</button>
+            </div>
+          </div>
+
+          <h3 class="t-display mt-32" style="font-size:24px;color:var(--white)">WEATHER & RIDING CONDITIONS</h3>
+          <div class="mt-16" id="weather-wrap">${loadingHTML()}</div>
+        </div>
+
+        <div>
+          <div class="card" style="border-color:var(--orange)">
+            <div style="background:var(--orange-dim);border-bottom:1px solid rgba(255,107,0,.3);padding:14px 20px"><div class="t-label t-orange">🏁 Trail Record</div></div>
+            <div class="p-20">
+              ${record ? `
+              <div class="t-mono" style="font-size:34px;color:var(--orange);font-weight:600;line-height:1">${record.time_display}</div>
+              <div style="font-size:13px;color:var(--white);font-weight:600;margin-top:8px">${Utils.escapeHtml(record.rider_name)}</div>
+              <div style="font-size:11px;color:var(--text-3)">${record.year ? `${record.year} ${Utils.escapeHtml(record.make)} ${Utils.escapeHtml(record.model)}` : 'Bike not specified'}</div>
+              <button class="btn btn-outline btn-sm mt-12 w-full" id="replay-btn">▶ Replay Record Lap</button>
+              ` : `<p style="font-size:13px;color:var(--text-3)">No record yet — be the first!</p>`}
+            </div>
+          </div>
+          <button class="btn btn-primary btn-full mt-16" onclick="openSubmitModal('${trail.id}')">🏁 Submit Your Time</button>
+
+          <div class="card mt-16">
+            <div class="card-header"><div class="t-label">Trail Information</div></div>
+            ${[['Difficulty', trail.difficulty],['Terrain', trail.terrain_type],['Surface', (trail.surface_tags||[]).join(', ')||'—'],['County', trail.county||'—'],['State', trail.state],['Submitted', Utils.formatDate(trail.created_at)]].map(([k,v])=>`
+              <div class="flex-between p-16" style="border-bottom:1px solid var(--border)"><span style="font-size:12px;color:var(--text-3)">${k}</span><span style="font-size:12px;font-weight:600;text-align:right">${Utils.escapeHtml(String(v||'—'))}</span></div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+    ${renderFooter()}
+  </div>`;
+
+  // Hero art + map
+  const hc = document.getElementById('trail-hero-canvas');
+  drawDesertScene(hc, trail.name.length * 17 + 3);
+
+  activeMotoMap = new MotoMap('trail-detail-map', { zoomControl: false }).init();
+  L.polyline(coords, { color: trail.accent_color || '#FF6B00', weight: 5 }).addTo(activeMotoMap.map);
+  activeMotoMap.map.fitBounds(L.latLngBounds(coords), { padding: [30,30] });
+
+  window._sectors = sectors;
+  window._reviewRating = 0;
+  window._trailCoords = coords;
+
+  if (record) {
+    document.getElementById('replay-btn').onclick = () => playReplay(coords, record.time_display, record.rider_name, record.year ? `${record.year} ${record.make} ${record.model}` : '', record.time_ms);
+  }
+
+  if (history.length >= 2) {
+    requestAnimationFrame(() => drawLineChart(document.getElementById('record-chart'), history));
+  }
+
+  const lat = trail.lat || Utils.centroid(coords)[0];
+  const lng = trail.lng || Utils.centroid(coords)[1];
+  WeatherAPI.getForLocation(lat, lng).then(w => renderWeatherBlock(w));
+};
+
+function renderWeatherBlock(w) {
+  const wrap = document.getElementById('weather-wrap');
+  if (!wrap) return;
+  if (!w) { wrap.innerHTML = `<p style="color:var(--text-3);font-size:13px">Weather data unavailable right now.</p>`; return; }
+  wrap.innerHTML = `
+    <div class="weather-current">
+      <div>
+        <div class="flex-center gap-12"><div class="weather-temp">${w.current.temp_f}<span class="weather-unit">°F</span></div><div style="font-size:40px">${w.current.condition_icon}</div></div>
+        <div class="riding-score-bar"><div class="riding-score-fill" style="width:${w.ridingScore.score}%;background:${w.ridingScore.color}"></div></div>
+        <div class="weather-condition" style="color:${w.ridingScore.color};font-weight:600">${'★'.repeat(w.ridingScore.stars)}${'☆'.repeat(5-w.ridingScore.stars)} ${w.ridingScore.label} Riding Conditions</div>
+        <div class="mt-16" style="font-size:12px;color:var(--text-2);line-height:1.8">
+          <div><strong style="color:var(--text-1)">Best Window:</strong> ${w.ridingScore.bestWindow}</div>
+          <div><strong style="color:var(--text-1)">Dust Level:</strong> ${w.ridingScore.dustLevel}</div>
+          <div><strong style="color:var(--text-1)">Heat Risk:</strong> ${w.ridingScore.heatRisk}</div>
+        </div>
+      </div>
+      <div class="weather-detail-grid">
+        <div class="weather-detail-item"><div class="weather-detail-val">${w.current.wind_mph} mph</div><div class="weather-detail-label">Wind ${w.current.wind_dir}</div></div>
+        <div class="weather-detail-item"><div class="weather-detail-val">${w.current.humidity}%</div><div class="weather-detail-label">Humidity</div></div>
+        <div class="weather-detail-item"><div class="weather-detail-val">${w.current.uv}</div><div class="weather-detail-label">UV Index</div></div>
+        <div class="weather-detail-item"><div class="weather-detail-val">${w.current.visibility_mi} mi</div><div class="weather-detail-label">Visibility</div></div>
+      </div>
+    </div>
+    <div class="forecast-strip">
+      ${w.forecast.map(d => `
+        <div class="forecast-card">
+          <div class="forecast-day">${d.day}</div>
+          <div class="forecast-icon">${d.icon}</div>
+          <div class="forecast-high">${d.high}°</div>
+          <div class="forecast-low">${d.low}°</div>
+          ${d.rain_pct > 0 ? `<div class="forecast-rain">💧${d.rain_pct}%</div>` : ''}
+        </div>`).join('')}
+    </div>
+    <div style="font-size:10px;color:var(--text-3);margin-top:10px">Live data via Open-Meteo · Riding score computed from current wind, rain, heat, and visibility.</div>`;
+}
+
+function showSector(idx) {
+  const s = window._sectors[idx];
+  document.querySelectorAll('.sector-chip').forEach((c,i) => c.classList.toggle('active', i===idx));
+  const detail = document.getElementById('sector-detail');
+  detail.classList.add('show');
+  detail.innerHTML = `
+    <div class="flex-between mb-12"><div class="t-display" style="font-size:22px;color:var(--white)">${Utils.escapeHtml(s.name)}</div>${diffBadge(s.difficulty)}</div>
+    <div class="grid-2">
+      <div><div class="t-label">Terrain</div><div style="font-size:14px;color:var(--text-1);margin-top:4px">${Utils.escapeHtml(s.terrain||'—')}</div></div>
+      <div><div class="t-label">Sector Record</div><div style="font-size:14px;color:var(--text-3);margin-top:4px">No sector-level times recorded yet</div></div>
+    </div>`;
+}
+
+async function openReviewForm(trailId) {
+  const profile = await requireAuth('Log in to leave a review.');
+  if (!profile) return;
+  document.getElementById('review-form-wrap').classList.remove('hidden');
+  document.getElementById('review-cta').classList.add('hidden');
+}
+function setStarRating(n) {
+  window._reviewRating = n;
+  document.querySelectorAll('#star-picker span').forEach((s,i) => s.style.color = i < n ? 'var(--orange)' : 'var(--text-4)');
+}
+async function submitReview(trailId) {
+  if (!window._reviewRating) { Toast.error('Pick a star rating first.'); return; }
+  const body = document.getElementById('review-body').value.trim();
+  const { error } = await TrailsAPI.submitReview(trailId, window._reviewRating, body, '');
+  if (error) { Toast.error(error); return; }
+  Toast.success('Review posted!');
+  const profile = await Auth.getCurrentProfile();
+  if (profile) await awardAchievementsQuietly(profile.id);
+  Pages.trailDetail(location.hash.split('/')[1]);
+}
+async function submitConditionReport(trailId) {
+  const profile = await requireAuth('Log in to submit a condition report.');
+  if (!profile) return;
+  const category = document.getElementById('report-category').value;
+  const note = document.getElementById('report-note').value.trim();
+  const { error } = await TrailsAPI.submitConditionReport(trailId, category, note);
+  if (error) { Toast.error(error); return; }
+  Toast.success('Condition report submitted.');
+  Pages.trailDetail(location.hash.split('/')[1]);
+}
+
+function playReplay(coords, timeDisplay, riderName, bikeName, timeMs) {
+  const bar = document.getElementById('replay-bar');
+  bar.classList.add('active');
+  document.getElementById('replay-rider-name').textContent = riderName;
+  document.getElementById('replay-bike').textContent = bikeName || '—';
+  if (!activeMotoMap) return;
+  activeMotoMap.animateReplay(coords, timeMs || 60000, {
+    onProgress: (progress, elapsedMs) => {
+      document.getElementById('replay-progress-fill').style.width = `${progress*100}%`;
+      document.getElementById('replay-elapsed').textContent = Utils.msToDisplay(elapsedMs);
+    },
+    onComplete: () => { document.getElementById('replay-elapsed').textContent = timeDisplay; }
+  });
+}
+
+// ── MAP PAGE ──────────────────────────────────────────────────────────
+Pages.mapPage = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const trails = await TrailsAPI.getAll();
+
+  app.innerHTML = `
+  <div class="map-page page">
+    <div class="map-toolbar">
+      <div class="t-display" style="font-size:18px;letter-spacing:.06em;color:var(--white)">TRAIL MAP</div>
+      <div class="map-search"><input type="text" placeholder="Search trails…" oninput="mapSearch(this.value)"></div>
+      <div class="flex gap-8" style="margin-left:auto;flex-wrap:wrap">
+        <button class="btn btn-sm btn-ghost" id="map-sat-toggle" onclick="toggleExploreMapSatellite()">🛰️ Satellite</button>
+        ${trails.map(t => `<button class="btn btn-sm btn-ghost" onclick="focusMapTrail('${t.id}')">${Utils.escapeHtml(t.name)}</button>`).join('')}
+        <button class="btn btn-sm btn-primary" onclick="go('request-trail')">+ Request Trail</button>
+      </div>
+    </div>
+    <div class="map-main">
+      <div id="main-map"></div>
+      <div class="map-sidebar hidden" id="map-sidebar">
+        <div class="map-sidebar-hdr">
+          <div><div id="ms-badge"></div><div id="ms-name" class="t-display" style="font-size:26px;color:var(--white);margin-top:4px"></div><div id="ms-loc" class="t-label" style="margin-top:4px"></div></div>
+          <button class="modal-close" onclick="document.getElementById('map-sidebar').classList.add('hidden')">✕</button>
+        </div>
+        <div class="map-sidebar-body" id="ms-body"></div>
+        <div class="map-sidebar-ftr" id="ms-ftr"></div>
+      </div>
+    </div>
+  </div>`;
+
+  activeMotoMap = new MotoMap('main-map').init();
+  window._mapTrails = {};
+  trails.forEach(t => {
+    activeMotoMap.addTrail(t, (trail) => showMapSidebar(trail));
+    window._mapTrails[t.id] = t;
+  });
+  if (!trails.length) {
+    Toast.info('No trails on the map yet — request the first one!');
+  }
+};
+
+async function showMapSidebar(trail) {
+  document.getElementById('map-sidebar').classList.remove('hidden');
+  document.getElementById('ms-badge').innerHTML = diffBadge(trail.difficulty);
+  document.getElementById('ms-name').textContent = trail.name.toUpperCase();
+  document.getElementById('ms-loc').textContent = trail.location_name || '';
+  const record = await TrailsAPI.getRecord(trail.id);
+  document.getElementById('ms-body').innerHTML = `
+    <div class="map-trail-stat-grid">
+      <div class="map-trail-stat"><div class="map-trail-stat-val">${trail.distance_miles||0} mi</div><div class="map-trail-stat-key">Distance</div></div>
+      <div class="map-trail-stat"><div class="map-trail-stat-val">${trail.elevation_gain_ft?'+'+trail.elevation_gain_ft+'ft':'—'}</div><div class="map-trail-stat-key">Elevation</div></div>
+      <div class="map-trail-stat"><div class="map-trail-stat-val" style="color:${trail.accent_color}">${record ? record.time_display : '—'}</div><div class="map-trail-stat-key">Record</div></div>
+      <div class="map-trail-stat"><div class="map-trail-stat-val" style="font-size:13px">${Utils.escapeHtml(trail.conditions||'Unknown')}</div><div class="map-trail-stat-key">Conditions</div></div>
+    </div>
+    <p style="font-size:13px;color:var(--text-2);line-height:1.7">${Utils.escapeHtml((trail.description||'').slice(0,200))}${(trail.description||'').length>200?'…':''}</p>`;
+  document.getElementById('ms-ftr').innerHTML = `
+    <button class="btn btn-primary w-full" onclick="go('trail/${trail.slug}')">View Full Trail →</button>
+    <button class="btn btn-outline w-full" onclick="openSubmitModal('${trail.id}')">+ Submit Time</button>`;
+  activeMotoMap.fitTrail(trail.id);
+}
+function focusMapTrail(id) { const t = window._mapTrails[id]; if (t) showMapSidebar(t); }
+function mapSearch(v) {
+  const q = v.toLowerCase();
+  const match = Object.values(window._mapTrails||{}).find(t => t.name.toLowerCase().includes(q));
+  if (match) showMapSidebar(match);
+}
+function toggleExploreMapSatellite() {
+  if (!activeMotoMap) return;
+  const mode = activeMotoMap.toggleLayer();
+  const btn = document.getElementById('map-sat-toggle');
+  if (btn) btn.innerHTML = mode === 'satellite' ? '🗺️ Map' : '🛰️ Satellite';
+}
+
+// ── REQUEST TRAIL (wizard + tracer) ──────────────────────────────────────
+let tracer = null;
+let wizardStep = 1;
+let wizardData = {};
+
+Pages.trailRequest = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const profile = await requireAuth('Log in to request a trail.');
+  if (!profile) return;
+
+  wizardStep = 1; wizardData = {};
+
+  app.innerHTML = `
+  <div class="page trail-request-page">
+    <div class="container-sm">
+      <div class="section-eyebrow">🗺 Community Mapping</div>
+      <h1 class="section-title">REQUEST A TRAIL</h1>
+      <p style="color:var(--text-2);margin:10px 0 32px">Trace the route, tell us about it, and submit for admin review.</p>
+
+      <div class="steps" id="wizard-steps">
+        ${[['1','Info'],['2','Trace'],['3','Details'],['4','Review']].map(([n,l],i) => `
+          <div class="step ${i===0?'active':''}" id="step-${n}">
+            <div class="step-number">${n}</div><div class="step-label">${l}</div>
+          </div>${i<3?'<div class="step-line"></div>':''}
+        `).join('')}
+      </div>
+
+      <div id="wizard-content"></div>
+    </div>
+  </div>`;
+  renderWizardStep();
+};
+
+function updateStepsUI() {
+  for (let n=1;n<=4;n++) {
+    const el = document.getElementById(`step-${n}`);
+    el.classList.remove('active','complete');
+    if (n < wizardStep) el.classList.add('complete');
+    if (n === wizardStep) el.classList.add('active');
+  }
+}
+
+function renderWizardStep() {
+  updateStepsUI();
+  const content = document.getElementById('wizard-content');
+  if (wizardStep === 1) {
+    content.innerHTML = `
+    <div class="card p-32">
+      <div class="form-group mb-16"><label class="form-label">Trail Name <span class="required">*</span></label><input class="form-input" id="w-name" value="${wizardData.trailName||''}" placeholder="e.g. Sandhill Loop"></div>
+      <div class="form-grid-2 mb-16">
+        <div class="form-group"><label class="form-label">Location <span class="required">*</span></label><input class="form-input" id="w-location" value="${wizardData.locationName||''}" placeholder="e.g. Gaines County, TX"></div>
+        <div class="form-group"><label class="form-label">County</label><input class="form-input" id="w-county" value="${wizardData.county||''}" placeholder="e.g. Gaines"></div>
+      </div>
+      <div class="form-grid-2 mb-16">
+        <div class="form-group"><label class="form-label">Terrain Type <span class="required">*</span></label>
+          <select class="form-select" id="w-terrain">
+            ${['sand','deep-sand','hardpack','rock','mixed','caliche'].map(t=>`<option value="${t}" ${wizardData.terrainType===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Estimated Difficulty <span class="required">*</span></label>
+          <select class="form-select" id="w-difficulty">
+            ${['beginner','intermediate','advanced','expert'].map(d=>`<option value="${d}" ${wizardData.difficulty===d?'selected':''}>${d}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="flex-between mt-24"><div></div><button class="btn btn-primary" onclick="wizardNext1()">Continue →</button></div>
+    </div>`;
+  }
+  else if (wizardStep === 2) {
+    content.innerHTML = `
+    <div class="card p-24">
+      <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">Pan and zoom the map so the crosshair sits on your next point, then press <strong style="color:var(--text-1)">Place Point</strong>. Use Undo to remove the last point, or import a route traced in Google Earth.</p>
+      <div class="trail-request-map">
+        <div id="tracer-map"></div>
+        <div class="tracer-crosshair"></div>
+        <div class="tracer-crosshair-dot"></div>
+        <div class="tracer-panel">
+          <div class="tracer-header">
+            <div class="tracer-title">ROUTE STATS</div>
+            <button class="btn btn-sm btn-ghost" id="tracer-sat-toggle" onclick="toggleTracerSatellite()">🛰️ Satellite</button>
+          </div>
+          <div class="tracer-body">
+            <div class="tracer-stat"><span class="tracer-stat-label">Points</span><span class="tracer-stat-val" id="tr-points">0</span></div>
+            <div class="tracer-stat"><span class="tracer-stat-label">Distance</span><span class="tracer-stat-val" id="tr-dist">0.00 mi</span></div>
+            <div class="tracer-stat"><span class="tracer-stat-label">Est. Ride Time</span><span class="tracer-stat-val" id="tr-time">—</span></div>
+            <div class="tracer-stat"><span class="tracer-stat-label">Est. Elevation Gain</span><span class="tracer-stat-val" id="tr-elev">—</span></div>
+            <div class="tracer-stat"><span class="tracer-stat-label">Est. Difficulty</span><span class="tracer-stat-val" id="tr-diff">—</span></div>
+          </div>
+          <div class="tracer-actions">
+            <button class="btn btn-primary btn-sm w-full" onclick="placeTracerPoint()">📍 Place Point Here</button>
+          </div>
+          <div class="tracer-actions">
+            <button class="btn btn-sm btn-ghost" onclick="tracer && tracer.undo()">↩ Undo</button>
+            <button class="btn btn-sm btn-ghost" onclick="tracer && tracer.closeLoop()">⭯ Close Loop</button>
+            <button class="btn btn-sm btn-danger" onclick="tracer && tracer.clear()">✕ Clear</button>
+          </div>
+          <div class="tracer-actions">
+            <input type="file" id="kml-import-input" accept=".kml,.kmz" class="hidden" onchange="handleKMLImport(event)">
+            <button class="btn btn-sm btn-outline w-full" onclick="document.getElementById('kml-import-input').click()">📁 Import from Google Earth</button>
+          </div>
+        </div>
+      </div>
+      <div class="flex-between mt-16"><button class="btn btn-outline" onclick="wizardStep=1;renderWizardStep()">← Back</button><button class="btn btn-primary" id="trace-continue" onclick="wizardNext2()" disabled>Continue →</button></div>
+    </div>`;
+    requestAnimationFrame(() => {
+      activeMotoMap = new MotoMap('tracer-map').init();
+      tracer = new TrailTracer(activeMotoMap);
+      tracer.activate(document.getElementById('w-terrain').value);
+      const onTracerChange = (stats) => {
+        const btn = document.getElementById('trace-continue');
+        if (!btn) return;
+        document.getElementById('tr-points').textContent = stats.pointCount;
+        document.getElementById('tr-dist').textContent = `${stats.distanceMiles} mi`;
+        document.getElementById('tr-time').textContent = stats.distanceMiles > 0 ? stats.estTimeDisplay : '—';
+        document.getElementById('tr-elev').textContent = stats.distanceMiles > 0 ? `+${stats.elevationGainFt} ft` : '—';
+        document.getElementById('tr-diff').textContent = stats.distanceMiles > 0 ? stats.difficulty : '—';
+        btn.disabled = !stats.canSubmit;
+      };
+      tracer.on('change', onTracerChange);
+      // Fire once immediately so the stats panel reflects any state
+      // that was already set before the listener was registered
+      onTracerChange(tracer.getStats());
+    });
+  }
+  else if (wizardStep === 3) {
+    content.innerHTML = `
+    <div class="card p-32">
+      <div class="form-group mb-16"><label class="form-label">Description</label><textarea class="form-textarea" id="w-desc" placeholder="What makes this trail worth riding? Notable features, hazards, best conditions…">${wizardData.description||''}</textarea></div>
+      <div class="form-group mb-16"><label class="form-label">Notes for Reviewer</label><textarea class="form-textarea" id="w-notes" placeholder="Anything the admin should know before approving this.">${wizardData.notes||''}</textarea></div>
+      <div class="form-group">
+        <label class="form-label">Photos (optional)</label>
+        <input type="file" id="w-photos" accept="image/*" multiple class="hidden" onchange="handlePhotoSelect(event)">
+        <div class="upload-area" onclick="document.getElementById('w-photos').click()">
+          <div class="upload-area-icon">📷</div>
+          <div class="upload-area-text">Click to choose photos</div>
+          <div class="upload-area-hint" id="photo-status">No files selected</div>
+        </div>
+      </div>
+      <div class="flex-between mt-24"><button class="btn btn-outline" onclick="wizardStep=2;renderWizardStep()">← Back</button><button class="btn btn-primary" onclick="wizardNext3()">Continue →</button></div>
+    </div>`;
+  }
+  else if (wizardStep === 4) {
+    const stats = tracer.getStats();
+    content.innerHTML = `
+    <div class="card p-32">
+      <div class="t-display" style="font-size:26px;color:var(--white);margin-bottom:16px">REVIEW YOUR SUBMISSION</div>
+      <div class="grid-2 mb-24">
+        <div><div class="t-label">Trail Name</div><div style="font-size:15px;margin-top:4px">${Utils.escapeHtml(wizardData.trailName)}</div></div>
+        <div><div class="t-label">Location</div><div style="font-size:15px;margin-top:4px">${Utils.escapeHtml(wizardData.locationName)}</div></div>
+        <div><div class="t-label">Terrain</div><div style="font-size:15px;margin-top:4px">${wizardData.terrainType}</div></div>
+        <div><div class="t-label">Difficulty</div><div style="margin-top:4px">${diffBadge(wizardData.difficulty)}</div></div>
+        <div><div class="t-label">Distance</div><div style="font-size:15px;margin-top:4px">${stats.distanceMiles} mi</div></div>
+        <div><div class="t-label">Points Traced</div><div style="font-size:15px;margin-top:4px">${stats.pointCount}</div></div>
+      </div>
+      ${wizardData.description ? `<div class="mb-16"><div class="t-label">Description</div><p style="font-size:13px;color:var(--text-2);margin-top:6px">${Utils.escapeHtml(wizardData.description)}</p></div>` : ''}
+      <div style="height:200px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);margin-bottom:20px"><div id="review-map" style="width:100%;height:100%"></div></div>
+      <div class="flex-between"><button class="btn btn-outline" onclick="wizardStep=3;renderWizardStep()">← Back</button><button class="btn btn-primary btn-lg" id="final-submit-btn" onclick="finalSubmitTrailRequest()">Submit for Review →</button></div>
+    </div>`;
+    requestAnimationFrame(() => {
+      const m = new MotoMap('review-map', { zoomControl:false }).init();
+      const coords = tracer.getCoords();
+      L.polyline(coords, { color:'#FF6B00', weight:4 }).addTo(m.map);
+      m.map.fitBounds(L.latLngBounds(coords), { padding:[20,20] });
+    });
+  }
+}
+
+function wizardNext1() {
+  const name = document.getElementById('w-name').value.trim();
+  const loc = document.getElementById('w-location').value.trim();
+  if (!name || !loc) { Toast.error('Trail name and location are required.'); return; }
+  wizardData.trailName = name;
+  wizardData.locationName = loc;
+  wizardData.county = document.getElementById('w-county').value.trim();
+  wizardData.terrainType = document.getElementById('w-terrain').value;
+  wizardData.difficulty = document.getElementById('w-difficulty').value;
+  wizardStep = 2; renderWizardStep();
+}
+function wizardNext2() {
+  if (!tracer || !tracer.getStats().canSubmit) { Toast.error('Trace at least 4 points first.'); return; }
+  wizardStep = 3; renderWizardStep();
+}
+
+function placeTracerPoint() {
+  if (!tracer) { Toast.error('Map is still loading — try again in a moment.'); return; }
+  tracer.placeAtCenter();
+}
+
+function toggleTracerSatellite() {
+  if (!activeMotoMap) return;
+  const mode = activeMotoMap.toggleLayer();
+  const btn = document.getElementById('tracer-sat-toggle');
+  if (btn) btn.innerHTML = mode === 'satellite' ? '🗺️ Map' : '🛰️ Satellite';
+}
+
+async function handleKMLImport(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  if (!tracer) { Toast.error('Map is still loading — try again in a moment.'); event.target.value = ''; return; }
+  try {
+    const coords = await GeoImport.fromFile(file);
+    if (!coords.length) { Toast.error('No route found in that file.'); return; }
+    tracer.setPoints(coords);
+    // Explicitly re-evaluate the button after import — setPoints emits
+    // 'change' per-point but we want a single definitive re-check at
+    // the end in case any listener missed the intermediate emissions.
+    const btn = document.getElementById('trace-continue');
+    if (btn) {
+      const stats = tracer.getStats();
+      btn.disabled = !stats.canSubmit;
+      document.getElementById('tr-points').textContent = stats.pointCount;
+      document.getElementById('tr-dist').textContent = `${stats.distanceMiles} mi`;
+    }
+    Toast.success(`Imported ${coords.length} point${coords.length!==1?'s':''} from ${file.name}.`);
+  } catch (err) {
+    Toast.error(err.message || 'Could not read that file.');
+  }
+  event.target.value = '';
+}
+
+async function handlePhotoSelect(e) {
+  const files = Array.from(e.target.files || []);
+  document.getElementById('photo-status').textContent = files.length ? `${files.length} file(s) selected — uploading…` : 'No files selected';
+  wizardData.photoUrls = wizardData.photoUrls || [];
+  for (const file of files) {
+    const { url } = await TrailRequestsAPI.uploadPhoto(file);
+    if (url) wizardData.photoUrls.push(url);
+  }
+  document.getElementById('photo-status').textContent = `${wizardData.photoUrls.length} photo(s) uploaded`;
+}
+function wizardNext3() {
+  wizardData.description = document.getElementById('w-desc').value.trim();
+  wizardData.notes = document.getElementById('w-notes').value.trim();
+  wizardStep = 4; renderWizardStep();
+}
+async function finalSubmitTrailRequest() {
+  const btn = document.getElementById('final-submit-btn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  const stats = tracer.getStats();
+  const coords = tracer.getCoords();
+  const { error } = await TrailRequestsAPI.submit({
+    trailName: wizardData.trailName,
+    description: wizardData.description,
+    locationName: wizardData.locationName,
+    county: wizardData.county,
+    terrainType: wizardData.terrainType,
+    difficulty: wizardData.difficulty,
+    surfaceTags: [wizardData.terrainType],
+    coords,
+    distanceMiles: stats.distanceMiles,
+    elevationGainFt: stats.elevationGainFt,
+    photos: wizardData.photoUrls || [],
+    notes: wizardData.notes,
+  });
+  if (error) { Toast.error(error); btn.disabled = false; btn.textContent = 'Submit for Review →'; return; }
+  Toast.success('Trail request submitted! An admin will review it soon.');
+  const profile = await Auth.getCurrentProfile();
+  if (profile) await awardAchievementsQuietly(profile.id);
+  go('dashboard');
+}
+
+// ── LEADERBOARDS ──────────────────────────────────────────────────────
+Pages.leaderboards = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const trails = await TrailsAPI.getAll();
+
+  app.innerHTML = `
+  <div class="page" style="padding-bottom:80px">
+    <div class="lb-hero"><div class="container">
+      <div class="section-eyebrow">🏆 Rankings</div>
+      <h1 class="section-title" style="font-size:clamp(38px,7vw,76px)">LEADERBOARDS</h1>
+      <div class="tabs mt-24" id="lb-tabs">
+        <button class="tab active" onclick="switchLBTab('overall',this)">Overall</button>
+        ${trails.map(t => `<button class="tab" onclick="switchLBTab('${t.id}',this)">${Utils.escapeHtml(t.name)}</button>`).join('')}
+      </div>
+    </div></div>
+    <div class="container" id="lb-content">${loadingHTML()}</div>
+    ${renderFooter()}
+  </div>`;
+  renderLBTab('overall');
+};
+
+async function switchLBTab(id, btn) {
+  document.querySelectorAll('#lb-tabs .tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  renderLBTab(id);
+}
+
+async function renderLBTab(id) {
+  const wrap = document.getElementById('lb-content');
+  wrap.innerHTML = loadingHTML();
+  if (id === 'overall') {
+    const rows = await LapTimesAPI.getGlobalLeaderboard(50);
+    wrap.innerHTML = rows.length ? `
+      <div class="card">
+        <table class="lb-table">
+          <thead><tr><th>#</th><th>Rider</th><th>Trails Ridden</th><th>Total Laps</th><th class="hide-mobile">Personal Best</th></tr></thead>
+          <tbody>
+            ${rows.map((r,i) => `
+            <tr onclick="go('profile/${r.profile?.username||''}')">
+              <td class="lb-rank ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':'#'+(i+1)}</td>
+              <td><div class="flex-center gap-12">${avatarHTML(r.profile,32)}<div><div style="font-weight:600">${Utils.escapeHtml(r.profile?.display_name||'Rider')}</div><div style="font-size:11px;color:var(--text-3)">${Utils.escapeHtml(r.profile?.location||'')}</div></div></div></td>
+              <td>${r.trailsRidden}</td><td>${r.laps}</td>
+              <td class="hide-mobile lb-time">${r.bestMs < Infinity ? Utils.msToDisplay(r.bestMs) : '—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : emptyState('🏆','No rankings yet','Once approved lap times start coming in, riders show up here ranked by activity.', 'Browse Trails', `go('trails')`);
+  } else {
+    const trail = (await TrailsAPI.getAll()).find(t => t.id === id);
+    const leaderboard = await LapTimesAPI.getLeaderboard(id);
+    wrap.innerHTML = `
+      <div class="flex-center gap-12 mb-16">${diffBadge(trail?.difficulty)}<span style="font-size:13px;color:var(--text-3)">${trail?.distance_miles||0} mi</span></div>
+      <div class="card">
+        ${leaderboard.length ? `
+        <table class="lb-table">
+          <thead><tr><th>#</th><th>Rider</th><th class="hide-mobile">Bike</th><th>Time</th><th class="hide-mobile">Date</th></tr></thead>
+          <tbody>
+            ${leaderboard.map((r,i) => `
+            <tr onclick="go('profile/${r.profiles?.username||''}')">
+              <td class="lb-rank ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':'#'+(i+1)}</td>
+              <td><div class="flex-center gap-12">${avatarHTML(r.profiles,32)}<div style="font-weight:600">${Utils.escapeHtml(r.profiles?.display_name||'Rider')}</div></div></td>
+              <td class="hide-mobile" style="font-size:12px;color:var(--text-3)">${r.bikes?`${r.bikes.year} ${r.bikes.make} ${r.bikes.model}`:'—'}</td>
+              <td class="lb-time">${r.time_display}</td>
+              <td class="hide-mobile" style="font-size:12px;color:var(--text-3)">${Utils.formatDate(r.recorded_at)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>` : emptyState('🏁','No times on this trail yet','','Submit a Time',`openSubmitModal('${id}')`)}
+      </div>`;
+  }
+}
+
+// ── COMMUNITY ─────────────────────────────────────────────────────────
+Pages.community = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const [feed, trails, profile] = await Promise.all([CommunityAPI.getFeed(), TrailsAPI.getAll(), Auth.getCurrentProfile()]);
+
+  app.innerHTML = `
+  <div class="page" style="padding-bottom:80px">
+    <div style="background:var(--surface-1);border-bottom:1px solid var(--border);padding:48px 0 36px;margin-bottom:40px">
+      <div class="container"><div class="section-eyebrow">👥 Rider Network</div><h1 class="section-title" style="font-size:clamp(38px,7vw,76px)">COMMUNITY</h1></div>
+    </div>
+    <div class="container">
+      <div class="sidebar-layout">
+        <div>
+          ${profile ? `
+          <div class="card p-20 mb-24">
+            <div class="flex-center gap-12 mb-12">${avatarHTML(profile,36)}<div style="font-weight:600">${Utils.escapeHtml(profile.display_name)}</div></div>
+            <textarea class="form-textarea" id="new-post-body" placeholder="Share a ride report, trail update, or photo…"></textarea>
+            <input type="file" id="new-post-photo" accept="image/*" class="hidden" onchange="handlePostPhotoSelect(event)">
+            <div id="new-post-photo-preview" class="mt-12 hidden">
+              <div style="position:relative;display:inline-block">
+                <img id="new-post-photo-img" class="photo-preview-thumb">
+                <button onclick="clearPostPhoto()" class="btn btn-sm btn-danger" style="position:absolute;top:-8px;right:-8px;padding:2px 7px;border-radius:50%">✕</button>
+              </div>
+            </div>
+            <div class="flex-between mt-12" style="flex-wrap:wrap;gap:8px">
+              <div class="flex gap-8">
+                <button class="btn btn-sm btn-ghost" onclick="document.getElementById('new-post-photo').click()">📷 Add Photo</button>
+                <select class="form-select" id="new-post-trail" style="max-width:200px"><option value="">Tag a trail (optional)</option>${trails.map(t=>`<option value="${t.id}">${Utils.escapeHtml(t.name)}</option>`).join('')}</select>
+              </div>
+              <button class="btn btn-primary" onclick="submitPost()" id="submit-post-btn">Post</button>
+            </div>
+          </div>` : `<div class="card p-20 mb-24 text-center"><p style="color:var(--text-3);font-size:13px">Log in to post to the community feed.</p><button class="btn btn-outline btn-sm mt-8" onclick="go('login')">Log In</button></div>`}
+          <div id="feed-wrap">${feed.length ? feed.map(p => postCardHTML(p)).join('') : emptyState('💬','No posts yet','Be the first to share something with the community.', null, '')}</div>
+        </div>
+        <div>
+          <div class="community-sidebar-widget">
+            <div class="community-sidebar-hdr"><div class="community-sidebar-title">Trails</div></div>
+            ${trails.length ? trails.slice(0,8).map(t => `<div class="sidebar-row" onclick="go('trail/${t.slug}')"><div style="width:8px;height:8px;border-radius:50%;background:${t.accent_color}"></div><div style="flex:1;font-size:13px">${Utils.escapeHtml(t.name)}</div>${diffBadge(t.difficulty)}</div>`).join('') : `<div class="p-16" style="font-size:12px;color:var(--text-3)">No trails yet</div>`}
+          </div>
+        </div>
+      </div>
+    </div>
+    ${renderFooter()}
+  </div>`;
+};
+
+function postCardHTML(p) {
+  return `
+  <div class="post-card" id="post-${p.id}">
+    <div class="post-header" onclick="go('profile/${p.profiles?.username||''}')">
+      ${avatarHTML(p.profiles,40)}
+      <div><div class="post-username">${Utils.escapeHtml(p.profiles?.display_name||'Rider')}</div><div class="post-time">${Utils.timeAgo(p.created_at)}</div></div>
+    </div>
+    <div class="post-body">${Utils.escapeHtml(p.body)}</div>
+    ${p.image_url ? `<div class="post-img-wrap"><img src="${p.image_url}" loading="lazy"></div>` : ''}
+    <div class="post-footer">
+      <button class="post-action ${p.liked?'liked':''}" onclick="togglePostLike('${p.id}',${p.liked})">${p.liked?'❤️':'🤍'} ${p.like_count||0}</button>
+      <button class="post-action" onclick="toggleComments('${p.id}')">💬 ${p.comment_count||0}</button>
+      ${p.trails ? `<div class="post-trail-tag" onclick="go('trail/${p.trails.slug}')">📍 ${Utils.escapeHtml(p.trails.name)}</div>` : ''}
+    </div>
+    <div id="comments-${p.id}" class="hidden"></div>
+  </div>`;
+}
+
+let _pendingPostImage = null;
+
+function handlePostPhotoSelect(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  _pendingPostImage = file;
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('new-post-photo-img').src = reader.result;
+    document.getElementById('new-post-photo-preview').classList.remove('hidden');
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearPostPhoto() {
+  _pendingPostImage = null;
+  document.getElementById('new-post-photo').value = '';
+  document.getElementById('new-post-photo-preview').classList.add('hidden');
+}
+
+async function submitPost() {
+  const profile = await requireAuth('Log in to post.');
+  if (!profile) return;
+  const body = document.getElementById('new-post-body').value.trim();
+  if (!body) { Toast.error('Write something first.'); return; }
+  const trailId = document.getElementById('new-post-trail').value || null;
+
+  const btn = document.getElementById('submit-post-btn');
+  btn.disabled = true; btn.textContent = 'Posting…';
+
+  let imageUrl = null;
+  if (_pendingPostImage) {
+    const { url, error: upErr } = await CommunityAPI.uploadImage(_pendingPostImage);
+    if (upErr) { Toast.error(upErr); btn.disabled = false; btn.textContent = 'Post'; return; }
+    imageUrl = url;
+  }
+
+  const { error } = await CommunityAPI.create(body, trailId, imageUrl);
+  if (error) { Toast.error(error); btn.disabled = false; btn.textContent = 'Post'; return; }
+  _pendingPostImage = null;
+  Toast.success('Posted!');
+  await awardAchievementsQuietly(profile.id);
+  Pages.community();
+}
+async function togglePostLike(postId, currentlyLiked) {
+  const profile = await requireAuth('Log in to like posts.');
+  if (!profile) return;
+  const { liked } = await CommunityAPI.toggleLike(postId, currentlyLiked);
+  const btn = document.querySelector(`#post-${postId} .post-action`);
+  const count = (parseInt(btn.textContent.trim().split(' ')[1]) || 0) + (liked ? 1 : -1);
+  btn.innerHTML = `${liked?'❤️':'🤍'} ${count}`;
+  btn.classList.toggle('liked', liked);
+}
+async function toggleComments(postId) {
+  const el = document.getElementById(`comments-${postId}`);
+  if (!el.classList.contains('hidden')) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const comments = await CommunityAPI.getComments(postId);
+  const profile = await Auth.getCurrentProfile();
+  el.innerHTML = `
+    ${comments.map(c => `<div class="comment-row">${avatarHTML(c.profiles,28)}<div class="comment-body"><div class="comment-name">${Utils.escapeHtml(c.profiles?.display_name||'Rider')}</div>${Utils.escapeHtml(c.body)}</div></div>`).join('')}
+    ${profile ? `<div class="comment-row"><input class="form-input" id="comment-input-${postId}" placeholder="Add a comment…" onkeydown="if(event.key==='Enter')addComment('${postId}')"><button class="btn btn-sm btn-ghost" onclick="addComment('${postId}')">Send</button></div>` : ''}`;
+}
+async function addComment(postId) {
+  const input = document.getElementById(`comment-input-${postId}`);
+  const body = input.value.trim();
+  if (!body) return;
+  const { error } = await CommunityAPI.addComment(postId, body);
+  if (error) { Toast.error(error); return; }
+  input.value = '';
+  toggleComments(postId); toggleComments(postId);
+}
+
+// ── GARAGE ────────────────────────────────────────────────────────────
+Pages.garage = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const profile = await requireAuth('Log in to view your garage.');
+  if (!profile) return;
+  const bikes = await BikesAPI.getForRider(profile.id);
+
+  app.innerHTML = `
+  <div class="page" style="padding-bottom:80px">
+    <div style="background:var(--surface-1);border-bottom:1px solid var(--border);padding:48px 0 36px;margin-bottom:40px">
+      <div class="container"><div class="section-eyebrow">🏍️ ${Utils.escapeHtml(profile.display_name)}</div><h1 class="section-title" style="font-size:clamp(38px,7vw,76px)">MY GARAGE</h1>
+      <p style="color:var(--text-2);margin-top:8px">${bikes.length} bike${bikes.length!==1?'s':''} registered</p></div>
+    </div>
+    <div class="container">
+      <div class="flex-between mb-24"><div></div><button class="btn btn-primary" onclick="openBikeModal()">+ Add Bike</button></div>
+      <div id="garage-grid">
+        ${bikes.length ? `<div class="grid-3">${bikes.map(b => bikeCardHTML(b)).join('')}</div>` : emptyState('🔧','No bikes yet','Add your first bike to start tracking rides and lap times.','+ Add Bike','openBikeModal()')}
+      </div>
+    </div>
+    ${renderFooter()}
+  </div>
+
+  <div class="modal-overlay hidden" id="bike-modal">
+    <div class="modal modal-lg">
+      <div class="modal-header"><div><div class="modal-title" id="bike-modal-title">ADD BIKE</div></div><button class="modal-close" onclick="closeBikeModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="customizer-preview"><canvas class="customizer-canvas" id="bike-preview-canvas"></canvas></div>
+        <div class="customizer-option-group">
+          <div class="customizer-option-title">Vehicle Type</div>
+          <div class="customizer-options" id="vehicle-type-buttons">
+            <button type="button" class="customizer-btn active" data-vtype="dirt_bike" onclick="setVehicleType('dirt_bike',this)">🏍️ Dirt Bike</button>
+            <button type="button" class="customizer-btn" data-vtype="atv" onclick="setVehicleType('atv',this)">🛺 Four Wheeler</button>
+            <button type="button" class="customizer-btn" data-vtype="side_by_side" onclick="setVehicleType('side_by_side',this)">🚙 Side-by-Side</button>
+          </div>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-group"><label class="form-label">Year</label><input class="form-input" id="b-year" type="number" placeholder="2024"></div>
+          <div class="form-group"><label class="form-label">Make</label><input class="form-input" id="b-make" placeholder="Honda"></div>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-group"><label class="form-label">Model</label><input class="form-input" id="b-model" placeholder="XR200R"></div>
+          <div class="form-group"><label class="form-label">Displacement (cc)</label><input class="form-input" id="b-cc" type="number" placeholder="200"></div>
+        </div>
+        <div class="customizer-option-group">
+          <div class="customizer-option-title">Primary Color</div>
+          <div class="customizer-options" id="color-primary-swatches">${['#FF6B00','#e2332b','#1e3a8a','#16a34a','#fbbf24','#ffffff','#000000','#7c3aed'].map(c=>`<div class="customizer-swatch" style="background:${c}" onclick="setBikeColor('primary','${c}',this)"></div>`).join('')}</div>
+        </div>
+        <div class="customizer-option-group">
+          <div class="customizer-option-title">Number Plate</div>
+          <div class="flex gap-8"><input class="form-input" id="b-plate" placeholder="22" style="max-width:80px" oninput="refreshBikePreview()"><div class="customizer-options" id="plate-color-swatches">${['#ffffff','#FF6B00','#000000','#fbbf24'].map(c=>`<div class="customizer-swatch" style="background:${c};width:24px;height:24px" onclick="setBikeColor('plate','${c}',this)"></div>`).join('')}</div></div>
+        </div>
+        <div class="form-group"><label class="form-label">Modifications (comma separated)</label><input class="form-input" id="b-mods" placeholder="FMF Exhaust, Jetted Carb, Renthal Bars"></div>
+        <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="b-notes" placeholder="Anything notable about this bike…"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger hidden" id="bike-delete-btn" onclick="deleteBikeFromModal()">Delete Bike</button>
+        <button class="btn btn-outline" onclick="closeBikeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveBike()">Save Bike</button>
+      </div>
+    </div>
+  </div>`;
+
+  window._bikeColors = { primary: '#FF6B00', plate: '#ffffff' };
+  window._bikeVehicleType = 'dirt_bike';
+  window._editingBikeId = null;
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.bike-thumb').forEach(c => {
+      const data = JSON.parse(c.dataset.bike.replace(/&apos;/g,"'"));
+      drawVehicleArt(c, data);
+    });
+  });
+}
+
+function bikeCardHTML(b) {
+  return `
+  <div class="bike-card" onclick="openBikeModal('${b.id}')">
+    <div class="bike-card-img"><canvas class="bike-thumb" data-bike='${JSON.stringify({vehicleType:b.vehicle_type||'dirt_bike',colorPrimary:b.color_primary,colorSecondary:b.color_secondary,numberPlate:b.number_plate,numberPlateColor:b.number_plate_color}).replace(/'/g,"&apos;")}'></canvas></div>
+    <div class="bike-card-body">
+      <div class="bike-year">${vehicleEmoji(b.vehicle_type)} ${b.year}</div>
+      <div class="bike-name">${Utils.escapeHtml(b.make).toUpperCase()} ${Utils.escapeHtml(b.model).toUpperCase()}</div>
+      <div class="mt-12">${(b.mods||[]).map(m=>`<span class="bike-mod-tag">🔧 ${Utils.escapeHtml(m)}</span>`).join('') || '<span class="bike-mod-tag">Stock</span>'}</div>
+      <div class="bike-stats">
+        <div><div class="bike-stat-val">${b.total_rides||0}</div><div class="bike-stat-label">Rides</div></div>
+        <div><div class="bike-stat-val">${b.total_miles||0}</div><div class="bike-stat-label">Miles</div></div>
+        <div><div class="bike-stat-val">${b.displacement_cc||'—'}</div><div class="bike-stat-label">CC</div></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function setActiveVehicleTypeButton(type) {
+  document.querySelectorAll('#vehicle-type-buttons .customizer-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.vtype === type)
+  );
+}
+
+function setVehicleType(type, el) {
+  window._bikeVehicleType = type;
+  setActiveVehicleTypeButton(type);
+  refreshBikePreview();
+}
+
+async function openBikeModal(bikeId) {
+  window._editingBikeId = bikeId || null;
+  document.getElementById('bike-modal').classList.remove('hidden');
+  document.getElementById('bike-delete-btn').classList.toggle('hidden', !bikeId);
+  if (bikeId) {
+    const profile = await Auth.getCurrentProfile();
+    const bikes = await BikesAPI.getForRider(profile.id);
+    const b = bikes.find(x => x.id === bikeId);
+    document.getElementById('bike-modal-title').textContent = 'EDIT BIKE';
+    document.getElementById('b-year').value = b.year;
+    document.getElementById('b-make').value = b.make;
+    document.getElementById('b-model').value = b.model;
+    document.getElementById('b-cc').value = b.displacement_cc || '';
+    document.getElementById('b-plate').value = b.number_plate || '';
+    document.getElementById('b-mods').value = (b.mods||[]).join(', ');
+    document.getElementById('b-notes').value = b.notes || '';
+    window._bikeColors = { primary: b.color_primary || '#FF6B00', plate: b.number_plate_color || '#ffffff' };
+    window._bikeVehicleType = b.vehicle_type || 'dirt_bike';
+  } else {
+    document.getElementById('bike-modal-title').textContent = 'ADD BIKE';
+    ['b-year','b-make','b-model','b-cc','b-plate','b-mods','b-notes'].forEach(id => document.getElementById(id).value = '');
+    window._bikeColors = { primary: '#FF6B00', plate: '#ffffff' };
+    window._bikeVehicleType = 'dirt_bike';
+  }
+  setActiveVehicleTypeButton(window._bikeVehicleType);
+  refreshBikePreview();
+}
+function closeBikeModal() { document.getElementById('bike-modal').classList.add('hidden'); }
+function setBikeColor(key, color, el) {
+  window._bikeColors[key] = color;
+  el.parentElement.querySelectorAll('.customizer-swatch').forEach(s => s.classList.remove('active'));
+  el.classList.add('active');
+  refreshBikePreview();
+}
+function refreshBikePreview() {
+  const canvas = document.getElementById('bike-preview-canvas');
+  drawVehicleArt(canvas, {
+    vehicleType: window._bikeVehicleType,
+    colorPrimary: window._bikeColors.primary,
+    numberPlate: document.getElementById('b-plate').value,
+    numberPlateColor: window._bikeColors.plate,
+  });
+}
+async function saveBike() {
+  const payload = {
+    vehicle_type: window._bikeVehicleType || 'dirt_bike',
+    year: parseInt(document.getElementById('b-year').value) || new Date().getFullYear(),
+    make: document.getElementById('b-make').value.trim(),
+    model: document.getElementById('b-model').value.trim(),
+    displacement_cc: parseInt(document.getElementById('b-cc').value) || null,
+    color_primary: window._bikeColors.primary,
+    number_plate: document.getElementById('b-plate').value.trim(),
+    number_plate_color: window._bikeColors.plate,
+    mods: document.getElementById('b-mods').value.split(',').map(s=>s.trim()).filter(Boolean),
+    notes: document.getElementById('b-notes').value.trim(),
+  };
+  if (!payload.make || !payload.model) { Toast.error('Make and model are required.'); return; }
+  const result = window._editingBikeId ? await BikesAPI.update(window._editingBikeId, payload) : await BikesAPI.create(payload);
+  if (result.error) { Toast.error(result.error); return; }
+  Toast.success('Bike saved!');
+  closeBikeModal();
+  Pages.garage();
+  const profile = await Auth.getCurrentProfile();
+  if (profile) awardAchievementsQuietly(profile.id);
+}
+async function deleteBikeFromModal() {
+  if (!confirm('Delete this bike permanently?')) return;
+  await BikesAPI.delete(window._editingBikeId);
+  Toast.success('Bike deleted.');
+  closeBikeModal();
+  Pages.garage();
+}
+
+// ── PROFILE ───────────────────────────────────────────────────────────
+Pages.profile = async function(username) {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const rider = await RidersAPI.getByUsername(username);
+  if (!rider) { Pages.notFound(); return; }
+
+  const currentProfile = await Auth.getCurrentProfile();
+  const isOwnProfile = currentProfile && currentProfile.id === rider.id;
+
+  // Backfill any achievements this rider has actually earned but never
+  // received (this is what makes achievements show up at all).
+  if (isOwnProfile) await awardAchievementsQuietly(rider.id);
+
+  const [stats, achievements, bikes, followerCount, followingCount, amFollowing] = await Promise.all([
+    RidersAPI.getStats(rider.id),
+    RidersAPI.getAchievements(rider.id),
+    BikesAPI.getForRider(rider.id),
+    FollowAPI.getFollowerCount(rider.id),
+    FollowAPI.getFollowingCount(rider.id),
+    (!isOwnProfile && currentProfile) ? FollowAPI.isFollowing(rider.id) : Promise.resolve(false),
+  ]);
+  const { data: posts } = await sb.from('posts').select('*, trails(name,slug)').eq('rider_id', rider.id).order('created_at',{ascending:false}).limit(10);
+
+  app.innerHTML = `
+  <div class="page" style="padding-bottom:80px">
+    <div class="profile-banner"><canvas id="profile-banner-canvas"></canvas></div>
+    <div class="container">
+      <div class="profile-header">
+        <div class="profile-avatar-wrap">${avatarHTML(rider,120)}</div>
+        <div style="flex:1">
+          <div class="profile-name">${Utils.escapeHtml(rider.display_name).toUpperCase()}</div>
+          <div class="profile-handle">@${Utils.escapeHtml(rider.username)} · ${rider.riding_level}</div>
+          <div class="profile-location">📍 ${Utils.escapeHtml(rider.location||'Location not set')}</div>
+          <div class="profile-bio">${Utils.escapeHtml(rider.bio||'')}</div>
+        </div>
+        <div class="profile-actions">
+          ${isOwnProfile
+            ? `<button class="btn btn-outline" onclick="openProfileEditModal()">Edit Profile</button>`
+            : currentProfile
+              ? `<button class="btn ${amFollowing?'btn-ghost':'btn-primary'}" id="follow-btn" onclick="toggleFollow('${rider.id}','${Utils.escapeHtml(rider.username)}',${amFollowing})">${amFollowing?'✓ Following':'+ Follow'}</button>`
+              : `<button class="btn btn-outline" onclick="go('login')">Log In to Follow</button>`}
+        </div>
+      </div>
+      <div class="profile-stats-bar">
+        <div><div class="profile-stat-num">${stats.trails}</div><div class="profile-stat-label">Trails Ridden</div></div>
+        <div><div class="profile-stat-num">${stats.laps}</div><div class="profile-stat-label">Total Laps</div></div>
+        <div><div class="profile-stat-num">${stats.records}</div><div class="profile-stat-label">Trail Records</div></div>
+        <div><div class="profile-stat-num">${bikes.length}</div><div class="profile-stat-label">Bikes</div></div>
+        <div style="cursor:pointer" onclick="openFollowListModal('${rider.id}','followers')"><div class="profile-stat-num">${followerCount}</div><div class="profile-stat-label">Followers</div></div>
+        <div style="cursor:pointer" onclick="openFollowListModal('${rider.id}','following')"><div class="profile-stat-num">${followingCount}</div><div class="profile-stat-label">Following</div></div>
+      </div>
+      <div class="sidebar-layout">
+        <div>
+          <div class="section-eyebrow mb-16">🎖 Achievements</div>
+          <div class="flex gap-12 mb-32" style="flex-wrap:wrap">
+            ${achievements.length ? achievements.map(a => `<div class="achievement-badge ${a.rarity}">${a.icon} ${Utils.escapeHtml(a.name)}</div>`).join('') : `<p style="color:var(--text-3);font-size:13px">No achievements earned yet — achievements unlock automatically as you ride.</p>`}
+          </div>
+          <div class="section-eyebrow mb-16">📅 Recent Posts</div>
+          ${posts && posts.length ? posts.map(p => postCardHTML({...p, profiles: rider})).join('') : `<p style="color:var(--text-3);font-size:13px">No posts yet.</p>`}
+        </div>
+        <div>
+          <div class="community-sidebar-widget">
+            <div class="community-sidebar-hdr flex-between"><div class="community-sidebar-title">Garage</div>${isOwnProfile ? `<button class="footer-link" style="margin:0" onclick="go('garage')">Manage →</button>` : ''}</div>
+            ${bikes.length ? bikes.map(b => `<div class="sidebar-row" onclick="${isOwnProfile?`go('garage')`:''}"><div style="font-size:14px">${vehicleEmoji(b.vehicle_type)}</div><div style="flex:1;font-size:13px">${b.year} ${Utils.escapeHtml(b.make)} ${Utils.escapeHtml(b.model)}</div></div>`).join('') : `<div class="p-16" style="font-size:12px;color:var(--text-3)">No bikes registered</div>`}
+          </div>
+        </div>
+      </div>
+    </div>
+    ${renderFooter()}
+  </div>
+
+  <div class="modal-overlay hidden" id="follow-list-modal">
+    <div class="modal">
+      <div class="modal-header"><div class="modal-title" id="fl-title">FOLLOWERS</div><button class="modal-close" onclick="document.getElementById('follow-list-modal').classList.add('hidden')">✕</button></div>
+      <div class="modal-body" id="fl-body" style="max-height:60vh;overflow-y:auto"></div>
+    </div>
+  </div>
+
+  ${isOwnProfile ? `
+  <div class="modal-overlay hidden" id="profile-edit-modal">
+    <div class="modal">
+      <div class="modal-header"><div class="modal-title">EDIT PROFILE</div><button class="modal-close" onclick="document.getElementById('profile-edit-modal').classList.add('hidden')">✕</button></div>
+      <div class="modal-body">
+        <div class="flex-center gap-16">
+          <div id="pe-avatar-preview">${avatarHTML(rider,80)}</div>
+          <div>
+            <input type="file" id="pe-avatar-input" accept="image/*" class="hidden" onchange="handleAvatarSelect(event,'${rider.username}')">
+            <button class="btn btn-sm btn-outline" onclick="document.getElementById('pe-avatar-input').click()">📷 Change Photo</button>
+            <div class="form-hint mt-4" id="pe-avatar-status">JPG or PNG, uploads immediately.</div>
+          </div>
+        </div>
+        <div class="form-group mt-16"><label class="form-label">Display Name</label><input class="form-input" id="pe-name" value="${Utils.escapeHtml(rider.display_name)}"></div>
+        <div class="form-group"><label class="form-label">Location</label><input class="form-input" id="pe-location" value="${Utils.escapeHtml(rider.location||'')}"></div>
+        <div class="form-group"><label class="form-label">Riding Level</label><select class="form-select" id="pe-level">${['beginner','intermediate','advanced','expert'].map(l=>`<option value="${l}" ${rider.riding_level===l?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="form-group"><label class="form-label">Bio</label><textarea class="form-textarea" id="pe-bio">${Utils.escapeHtml(rider.bio||'')}</textarea></div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-outline" onclick="document.getElementById('profile-edit-modal').classList.add('hidden')">Cancel</button><button class="btn btn-primary" onclick="saveProfileEdit('${rider.username}')">Save</button></div>
+    </div>
+  </div>` : ''}`;
+
+  requestAnimationFrame(() => drawDesertScene(document.getElementById('profile-banner-canvas'), rider.username.length * 23));
+};
+
+async function toggleFollow(targetId, targetUsername, currentlyFollowing) {
+  const profile = await requireAuth('Log in to follow riders.');
+  if (!profile) return;
+  const btn = document.getElementById('follow-btn');
+  btn.disabled = true;
+  const result = currentlyFollowing ? await FollowAPI.unfollow(targetId) : await FollowAPI.follow(targetId);
+  btn.disabled = false;
+  if (result.error) { Toast.error(result.error); return; }
+  Toast.success(currentlyFollowing ? 'Unfollowed.' : 'Now following!');
+  Pages.profile(targetUsername);
+}
+
+async function openFollowListModal(riderId, kind) {
+  document.getElementById('follow-list-modal').classList.remove('hidden');
+  document.getElementById('fl-title').textContent = kind === 'followers' ? 'FOLLOWERS' : 'FOLLOWING';
+  const body = document.getElementById('fl-body');
+  body.innerHTML = loadingHTML();
+  const list = kind === 'followers' ? await FollowAPI.getFollowers(riderId) : await FollowAPI.getFollowing(riderId);
+  body.innerHTML = list.length
+    ? list.map(r => `<div class="sidebar-row" onclick="document.getElementById('follow-list-modal').classList.add('hidden');go('profile/${r.username}')">${avatarHTML(r,32)}<div style="flex:1"><div style="font-size:13px;font-weight:600">${Utils.escapeHtml(r.display_name)}</div><div style="font-size:11px;color:var(--text-3)">@${Utils.escapeHtml(r.username)}</div></div></div>`).join('')
+    : `<p style="color:var(--text-3);font-size:13px;padding:8px 0">${kind === 'followers' ? 'No followers yet.' : 'Not following anyone yet.'}</p>`;
+}
+
+function openProfileEditModal() { document.getElementById('profile-edit-modal').classList.remove('hidden'); }
+
+async function handleAvatarSelect(e, username) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  document.getElementById('pe-avatar-status').textContent = 'Uploading…';
+  const { data, error } = await Auth.uploadAvatar(file);
+  if (error) { Toast.error(error); document.getElementById('pe-avatar-status').textContent = 'Upload failed — try again.'; return; }
+  document.getElementById('pe-avatar-status').textContent = 'Photo updated!';
+  document.getElementById('pe-avatar-preview').innerHTML = avatarHTML(data, 80);
+  await updateNavAuthUI();
+  Toast.success('Profile photo updated!');
+}
+
+async function saveProfileEdit(currentUsername) {
+  const updates = {
+    display_name: document.getElementById('pe-name').value.trim(),
+    location: document.getElementById('pe-location').value.trim(),
+    riding_level: document.getElementById('pe-level').value,
+    bio: document.getElementById('pe-bio').value.trim(),
+  };
+  const { error } = await Auth.updateProfile(updates);
+  if (error) { Toast.error(error); return; }
+  Toast.success('Profile updated!');
+  await updateNavAuthUI();
+  document.getElementById('profile-edit-modal').classList.add('hidden');
+  Pages.profile(currentUsername);
+}
+
+// ── MEMBERS (search) ─────────────────────────────────────────────────────
+let _memberSearchTimer = null;
+Pages.members = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const initial = await RidersAPI.getAll();
+
+  app.innerHTML = `
+  <div class="page" style="padding-bottom:80px">
+    <div style="background:var(--surface-1);border-bottom:1px solid var(--border);padding:48px 0 36px;margin-bottom:40px">
+      <div class="container">
+        <div class="section-eyebrow">👥 Find Riders</div>
+        <h1 class="section-title" style="font-size:clamp(38px,7vw,76px)">MEMBERS</h1>
+        <div class="map-search mt-24" style="max-width:360px">
+          <input type="text" id="member-search-input" placeholder="Search by name or username…" oninput="handleMemberSearchInput()">
+        </div>
+      </div>
+    </div>
+    <div class="container">
+      <div id="members-grid">${memberGridHTML(initial)}</div>
+    </div>
+    ${renderFooter()}
+  </div>`;
+};
+
+function memberGridHTML(riders) {
+  if (!riders.length) return emptyState('🔍','No members found','Try a different search term.', null, '');
+  return `<div class="grid-3">${riders.map(r => `
+    <div class="card p-20 hoverable" style="cursor:pointer" onclick="go('profile/${r.username}')">
+      <div class="flex-center gap-12">
+        ${avatarHTML(r,48)}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:14px" class="truncate">${Utils.escapeHtml(r.display_name)}</div>
+          <div style="font-size:11px;color:var(--text-3)">@${Utils.escapeHtml(r.username)}</div>
+        </div>
+      </div>
+      <div class="flex-between mt-12">
+        <span style="font-size:11px;color:var(--text-3)">📍 ${Utils.escapeHtml(r.location||'—')}</span>
+        <span class="badge badge-orange">${r.riding_level}</span>
+      </div>
+    </div>`).join('')}</div>`;
+}
+
+function handleMemberSearchInput() {
+  clearTimeout(_memberSearchTimer);
+  const q = document.getElementById('member-search-input').value;
+  _memberSearchTimer = setTimeout(async () => {
+    const grid = document.getElementById('members-grid');
+    grid.innerHTML = loadingHTML();
+    const results = q.trim() ? await RidersAPI.search(q) : await RidersAPI.getAll();
+    grid.innerHTML = memberGridHTML(results);
+  }, 300);
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────
+Pages.dashboard = async function() {
+  app.innerHTML = loadingHTML();
+  if (renderSetupGateIfNeeded(app)) return;
+  const profile = await requireAuth('Log in to view your dashboard.');
+  if (!profile) return;
+
+  const [myLaps, myRequests, notifications, bikes] = await Promise.all([
+    LapTimesAPI.getMine(),
+    TrailRequestsAPI.getMine(),
+    NotificationsAPI.getMine(),
+    BikesAPI.getForRider(profile.id),
+  ]);
+  await NotificationsAPI.markAllRead();
+
+  app.innerHTML = `
+  <div class="page dashboard-page">
+    <div class="container">
+      <div class="dashboard-welcome">
+        <div class="dashboard-welcome-name">Welcome back, ${Utils.escapeHtml(profile.display_name.split(' ')[0])}.</div>
+        <div class="dashboard-welcome-sub">Here's what's happening with your MotoHub account.</div>
+      </div>
+      <div class="dashboard-grid">
+        <div>
+          <div class="section-eyebrow mb-16">⏱ My Lap Time Submissions</div>
+          <div class="card mb-32">
+            ${myLaps.length ? myLaps.map(l => `
+              <div class="activity-item">
+                <div class="activity-icon" style="background:var(--orange-dim)">🏁</div>
+                <div style="flex:1"><div class="activity-text"><strong>${l.trails?.name||'Trail'}</strong> — ${l.time_display}</div><div class="activity-time">${Utils.timeAgo(l.created_at)}</div></div>
+                <span class="badge badge-${l.status}">${l.status}</span>
+              </div>`).join('') : `<div class="p-24" style="font-size:13px;color:var(--text-3)">No lap times submitted yet.</div>`}
+          </div>
+
+          <div class="section-eyebrow mb-16">🗺 My Trail Requests</div>
+          <div class="card">
+            ${myRequests.length ? myRequests.map(r => `
+              <div class="activity-item">
+                <div class="activity-icon" style="background:var(--blue-dim)">📍</div>
+                <div style="flex:1"><div class="activity-text"><strong>${Utils.escapeHtml(r.trail_name)}</strong> — ${Utils.escapeHtml(r.location_name||'')}</div><div class="activity-time">${Utils.timeAgo(r.created_at)}</div></div>
+                <span class="badge badge-${r.status==='approved'?'approved':r.status==='rejected'?'rejected':'pending'}">${r.status.replace('_',' ')}</span>
+              </div>`).join('') : `<div class="p-24" style="font-size:13px;color:var(--text-3)">No trail requests yet. <button class="footer-link" style="display:inline;color:var(--orange)" onclick="go('request-trail')">Request one →</button></div>`}
+          </div>
+        </div>
+        <div>
+          <div class="community-sidebar-widget">
+            <div class="community-sidebar-hdr"><div class="community-sidebar-title">Notifications</div></div>
+            ${notifications.length ? notifications.map(n => `<div class="notif-item ${!n.read?'unread':''}"><div class="notif-icon">🔔</div><div class="notif-text">${Utils.escapeHtml(n.message)}<div class="notif-time">${Utils.timeAgo(n.created_at)}</div></div></div>`).join('') : `<div class="p-16" style="font-size:12px;color:var(--text-3)">No notifications yet.</div>`}
+          </div>
+          <div class="community-sidebar-widget">
+            <div class="community-sidebar-hdr flex-between"><div class="community-sidebar-title">Garage</div><button class="footer-link" style="margin:0" onclick="go('garage')">Manage →</button></div>
+            <div class="p-16"><div class="profile-stat-num" style="color:var(--orange)">${bikes.length}</div><div class="profile-stat-label">Bikes Registered</div></div>
+          </div>
+          <button class="btn btn-outline btn-full" onclick="go('profile/${profile.username}')">View Public Profile</button>
+        </div>
+      </div>
+    </div>
+    ${renderFooter()}
+  </div>`;
+};
+
+// ── AUTH PAGES ────────────────────────────────────────────────────────
+Pages.login = function() {
+  app.innerHTML = `
+  <div class="page auth-page">
+    <div class="auth-box">
+      <div class="auth-box-header"><div class="auth-box-title">LOG IN</div><div class="auth-box-sub">Welcome back to MotoHub</div></div>
+      <div class="auth-box-body">
+        <div class="auth-error" id="auth-error"></div>
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="login-email" placeholder="you@example.com"></div>
+        <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="login-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"></div>
+        <button class="btn btn-primary btn-full" onclick="doLogin()" id="login-btn">Log In</button>
+      </div>
+      <div class="auth-box-footer">Don't have an account? <span class="auth-switch" onclick="go('register')">Sign up</span></div>
+    </div>
+  </div>`;
+};
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('auth-error');
+  errEl.classList.remove('show');
+  if (!email || !password) { errEl.textContent = 'Enter both email and password.'; errEl.classList.add('show'); return; }
+  const btn = document.getElementById('login-btn'); btn.disabled = true; btn.textContent = 'Logging in…';
+  const { error } = await Auth.login(email, password);
+  btn.disabled = false; btn.textContent = 'Log In';
+  if (error) { errEl.textContent = error; errEl.classList.add('show'); return; }
+  Toast.success('Welcome back!');
+  await updateNavAuthUI();
+  go('dashboard');
+}
+
+Pages.register = function() {
+  app.innerHTML = `
+  <div class="page auth-page">
+    <div class="auth-box">
+      <div class="auth-box-header"><div class="auth-box-title">SIGN UP</div><div class="auth-box-sub">Join the West Texas riding community</div></div>
+      <div class="auth-box-body">
+        <div class="auth-error" id="auth-error"></div>
+        <div class="form-grid-2">
+          <div class="form-group"><label class="form-label">Username</label><input class="form-input" id="reg-username" placeholder="jaxon_moto"></div>
+          <div class="form-group"><label class="form-label">Display Name</label><input class="form-input" id="reg-displayname" placeholder="Jaxon Frias"></div>
+        </div>
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="reg-email" placeholder="you@example.com"></div>
+        <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="reg-password" placeholder="At least 6 characters"></div>
+        <div class="form-grid-2">
+          <div class="form-group"><label class="form-label">Location</label><input class="form-input" id="reg-location" placeholder="Seminole, TX"></div>
+          <div class="form-group"><label class="form-label">Riding Level</label><select class="form-select" id="reg-level">${['beginner','intermediate','advanced','expert'].map(l=>`<option value="${l}">${l}</option>`).join('')}</select></div>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doRegister()" id="reg-btn">Create Account</button>
+      </div>
+      <div class="auth-box-footer">Already have an account? <span class="auth-switch" onclick="go('login')">Log in</span></div>
+    </div>
+  </div>`;
+};
+async function doRegister() {
+  const errEl = document.getElementById('auth-error');
+  errEl.classList.remove('show');
+  const username = document.getElementById('reg-username').value.trim();
+  const displayName = document.getElementById('reg-displayname').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const location_ = document.getElementById('reg-location').value.trim();
+  const ridingLevel = document.getElementById('reg-level').value;
+  if (!username || !displayName || !Utils.validateEmail(email) || password.length < 6) {
+    errEl.textContent = 'Fill in all fields. Password must be at least 6 characters.'; errEl.classList.add('show'); return;
+  }
+  const btn = document.getElementById('reg-btn'); btn.disabled = true; btn.textContent = 'Creating account…';
+  const { error } = await Auth.register({ email, password, username, displayName, location: location_, ridingLevel });
+  btn.disabled = false; btn.textContent = 'Create Account';
+  if (error) { errEl.textContent = error; errEl.classList.add('show'); return; }
+  Toast.success('Account created! Check your email to confirm, then log in.');
+  go('login');
+}
+
+// ── 404 ───────────────────────────────────────────────────────────────
+Pages.notFound = function() {
+  app.innerHTML = `<div class="page flex-center" style="justify-content:center;flex-direction:column;gap:16px">
+    <div style="font-size:48px">🧭</div>
+    <div class="t-display" style="font-size:36px;color:var(--white)">PAGE NOT FOUND</div>
+    <button class="btn btn-primary" onclick="go('home')">Back to Home</button>
+  </div>`;
+};
+
+// ── SUBMIT TIME MODAL ─────────────────────────────────────────────────
+async function openSubmitModal(preselectTrailId) {
+  const profile = await requireAuth('Log in to submit a lap time.');
+  if (!profile) return;
+  const [trails, bikes] = await Promise.all([TrailsAPI.getAll(), BikesAPI.getForRider(profile.id)]);
+  const trailSel = document.getElementById('st-trail');
+  trailSel.innerHTML = `<option value="">Select a trail…</option>` + trails.map(t => `<option value="${t.id}" ${t.id===preselectTrailId?'selected':''}>${Utils.escapeHtml(t.name)}</option>`).join('');
+  const bikeSel = document.getElementById('st-bike');
+  bikeSel.innerHTML = `<option value="">No bike specified</option>` + bikes.map(b => `<option value="${b.id}">${b.year} ${Utils.escapeHtml(b.make)} ${Utils.escapeHtml(b.model)}</option>`).join('');
+  ['st-min','st-sec','st-ms','st-notes','st-video'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('submit-modal').classList.remove('hidden');
+}
+function closeSubmitModal() { document.getElementById('submit-modal').classList.add('hidden'); }
+async function submitLapTime() {
+  const trailId = document.getElementById('st-trail').value;
+  const min = document.getElementById('st-min').value;
+  const sec = document.getElementById('st-sec').value;
+  const ms = document.getElementById('st-ms').value;
+  if (!trailId) { Toast.error('Select a trail.'); return; }
+  if (!min && !sec) { Toast.error('Enter your lap time.'); return; }
+  const timeMs = Utils.displayToMs(min, sec, ms);
+  const btn = document.getElementById('st-submit-btn'); btn.disabled = true; btn.textContent = 'Submitting…';
+  const { error } = await LapTimesAPI.submit({
+    trailId, bikeId: document.getElementById('st-bike').value || null, timeMs,
+    notes: document.getElementById('st-notes').value.trim(),
+    videoUrl: document.getElementById('st-video').value.trim(),
+  });
+  btn.disabled = false; btn.textContent = 'Submit Time →';
+  if (error) { Toast.error(error); return; }
+  Toast.success('Time submitted! Pending admin review.');
+  closeSubmitModal();
+};
+
+// ── BOOT ──────────────────────────────────────────────────────────────
+(async function boot() {
+  await updateNavAuthUI();
+  router();
+  if (sb) {
+    sb.auth.onAuthStateChange(() => updateNavAuthUI());
+  }
+})();
+</script>
+</body>
+</html>
