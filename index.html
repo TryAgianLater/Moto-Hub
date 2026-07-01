@@ -1228,7 +1228,7 @@ function renderWizardStep() {
           </div>
         </div>
       </div>
-      <div class="flex-between mt-16"><button class="btn btn-outline" onclick="wizardStep=1;renderWizardStep()">← Back</button><button class="btn btn-primary" id="trace-continue" onclick="wizardNext2()" disabled>Continue →</button></div>
+      <div class="flex-between mt-16"><button class="btn btn-outline" onclick="wizardStep=1;renderWizardStep()">← Back</button><button class="btn btn-primary" id="trace-continue" onclick="wizardNext2()" >Continue →</button></div>
     </div>`;
     requestAnimationFrame(() => {
       activeMotoMap = new MotoMap('tracer-map').init();
