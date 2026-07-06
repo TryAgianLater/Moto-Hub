@@ -154,8 +154,14 @@ function router() {
   document.querySelectorAll('[data-nav-page]').forEach(el => el.classList.toggle('active', el.dataset.navPage === page));
   window.scrollTo({ top: 0, behavior: 'instant' });
   if (activeMotoMap) { activeMotoMap = null; }
-  const handler = ROUTES[page];
-  if (handler) handler(rest); else Pages.notFound();
+  if (Object.prototype.hasOwnProperty.call(ROUTES, page)) {
+    const handler = ROUTES[page];
+    if (typeof handler === 'function') {
+      handler(rest);
+      return;
+    }
+  }
+  Pages.notFound();
 }
 window.addEventListener('hashchange', router);
 
