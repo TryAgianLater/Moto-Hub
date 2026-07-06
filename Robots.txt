@@ -1,0 +1,45 @@
+# MotoHub Robots.txt
+# https://motohub.cc
+
+User-agent: *
+Allow: /
+
+# Core pages
+Allow: /trails
+Allow: /trail/
+Allow: /community
+Allow: /members
+Allow: /profile/
+Allow: /leaderboards
+Allow: /garage
+Allow: /map
+
+# Block private / auth / admin areas
+Disallow: /admin
+Disallow: /login
+Disallow: /register
+Disallow: /dashboard
+Disallow: /settings
+
+# Optional: prevent indexing of API/data endpoints if exposed
+Disallow: /api
+Disallow: /supabase
+
+# Sitemap (add when you generate it)
+Sitemap: https://motohub.cc/sitemap.xml
+
+# Crawl delay (optional, not required but polite for bots)
+Crawl-delay: 5
+
+# AI crawlers (optional hard block if you want tighter control)
+User-agent: GPTBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
